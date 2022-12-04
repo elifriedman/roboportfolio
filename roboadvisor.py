@@ -1,3 +1,4 @@
+import argparse
 import csv
 import math
 import time
@@ -155,12 +156,28 @@ class OrderMaker:
         else:
             return self.connector.placeOrder(contract=contract, order=order)
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--order", action="store_true")
+    parser.add_argument("--port", type=int, default=7496)
+    return parser.parse_args()
 
 if __name__ == "__main__":
+    args = parse_args()
+    do_order = args.order
+    port = args.port
     ib = ibi.IB()
-    ib.connect("127.0.0.1", port=7496, clientId=123)
+    ib.connect("127.0.0.1", port=port, clientId=123)
     portfolio = CurrentPortfolio(connector=ib)
     plan = PlanReader.read_plan("config/plan.csv")
     plan = PlanCompleter(ib).complete_plan(plan=plan, portfolio=portfolio)
     available_cash = AccountInfo(connector=ib).available_cash()
+    print(f"You have ${available_cash:03f}")
     investments = plan.calculate_shares_to_purchase(available_cash)
+
+    order_maker = OrderMaker(ib)
+    for investment in investments:
+        print(investment)
+
+        if do_order is True:
+            order_maker.order(investment, test=False)
