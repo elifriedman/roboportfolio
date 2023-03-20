@@ -1,6 +1,7 @@
 import argparse
 import csv
 import math
+import random
 import time
 from dataclasses import dataclass
 from typing import List, Dict, Any, Union
@@ -13,7 +14,8 @@ class Investment:
     allocation: float
     num_shares: float = None
     market_price: float = None
-    shares_to_purchase: float = None
+    exact_shares_to_purchase: float = None
+    shares_to_purchase: int = None
 
 
 class MarketDataGetter:
@@ -61,11 +63,16 @@ class AccountInfo:
     def __init__(self, connector: ibi.IB):
         self.connector = connector
 
-    def available_cash(self):
+    def available_cash(self, currency: str = "USD"):
+        print([
+            f"{v.value} {v.currency}"
+            for v in self.connector.accountValues()
+            if v.tag == "AvailableFunds"
+        ])
         funds = [
             float(v.value)
             for v in self.connector.accountValues()
-            if v.tag == "AvailableFunds"
+            if v.tag == "AvailableFunds" and v.currency == currency
         ][0]
         return funds
 
@@ -93,13 +100,28 @@ class Plan:
 
     def calculate_shares_to_purchase(self, available_cash: float):
         total_value = self.calculate_total_value(available_cash)
+        money_left = 0.0
         for investment in self.investments:
             desired_value = investment.allocation * total_value
             desired_num_shares = desired_value / investment.market_price
             current_num_shares = investment.num_shares
-            shares_to_purchase = desired_num_shares - current_num_shares
-            investment.shares_to_purchase = shares_to_purchase
+            investment.exact_shares_to_purchase = desired_num_shares - current_num_shares
+            investment.shares_to_purchase = int(math.floor(investment.exact_shares_to_purchase))
+            money_left += investment.market_price * (investment.exact_shares_to_purchase - investment.shares_to_purchase)
+        self.calculate_leftover_shares_to_purchase(money_left)
         return self.investments
+
+    def calculate_leftover_shares_to_purchase(self, money_left: float, randomly: bool = True):
+        idxs = list(range(len(self.investments)))
+        if randomly is True:
+            random.shuffle(idxs)
+        for idx in idxs:
+            investment = self.investments[idx]
+            if investment.market_price <= money_left:
+                investment.shares_to_purchase += 1
+                money_left -= investment.market_price 
+        return self.investments
+
 
 
 class PlanReader:
