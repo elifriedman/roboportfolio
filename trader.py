@@ -110,7 +110,7 @@ class PortfolioUpdater:
                 MarketDataGetter.cancel_contract_request(contract=contract)
                 callback(position)
 
-        MarketDataGetter.request_price_by_contract(
+        MarketDataGetter(self.client).request_price_by_contract(
             contract=simple_contract, callback=get_price
         )
 
@@ -219,18 +219,18 @@ class PlanReader:
         return Plan
 
     @classmethod
-    def _load_file(cls, path: str) -> List[Dict[Any]]:
+    def _load_file(cls, path: str) -> List[Dict[Any, Any]]:
         with open(path) as f:
             dr = csv.DictReader(f)
             return [row for row in dr]
 
 
 if __name__ == "__main__":
-    PORT = 7496
+    PORT = 8888
     client = Client(port=PORT)
     time.sleep(0.5)
     p = Portfolio()
     PortfolioUpdater(client).update_portfolio(
-        portfolio=p, callback=lambda *args: print("Done")
+        portfolio=p, callback=lambda *args: print(args)
     )
-    md = MarketDataGetter(client)
+    # md = MarketDataGetter(client)

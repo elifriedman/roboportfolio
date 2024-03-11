@@ -189,7 +189,7 @@ if __name__ == "__main__":
     do_order = args.order
     port = args.port
     ib = ibi.IB()
-    ib.connect("127.0.0.1", port=port, clientId=123)
+    ib.connect("127.0.0.1", port=port, clientId=123, timeout=60)
     portfolio = CurrentPortfolio(connector=ib)
     plan = PlanReader.read_plan("config/plan.csv")
     plan = PlanCompleter(ib).complete_plan(plan=plan, portfolio=portfolio)
