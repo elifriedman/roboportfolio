@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import argparse
 from collections import namedtuple
 import csv
 from dataclasses import dataclass
@@ -48,14 +49,14 @@ class IBKRSession:
         url = self.resource_url + endpoint
         return url
 
-    def get(self, endpoint: str, params: dict = None) -> Dict:
-        return self.make_request("get", endpoint=endpoint, params=params)
+    def get(self, endpoint: str, params: dict = None, raise_on_error: bool = True) -> Dict:
+        return self.make_request("get", endpoint=endpoint, params=params, raise_on_error=raise_on_error)
 
-    def post(self, endpoint: str, json_payload: dict = None) -> Dict:
-        return self.make_request("post", endpoint=endpoint, json_payload=json_payload)
+    def post(self, endpoint: str, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
+        return self.make_request("post", endpoint=endpoint, json_payload=json_payload, raise_on_error=raise_on_error)
 
-    def delete(self, endpoint: str, params: dict = None, json_payload: dict = None) -> Dict:
-        return self.make_request("delete", endpoint=endpoint, params=params, json_payload=json_payload)
+    def delete(self, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
+        return self.make_request("delete", endpoint=endpoint, params=params, json_payload=json_payload, raise_on_error=raise_on_error)
 
     def make_request(self, method: str, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
         """Handles all the requests in the library.
@@ -123,7 +124,12 @@ class IBKRSession:
                 "error_reason": response.reason,
                 "response_url": response.url,
                 "response_body": response_data,
-                "response_request": dict(response.request.headers),
+                "response_request": {
+                    "url": url,
+                    "params": params,
+                    "json": json_payload,
+                    **dict(response.request.headers),
+                },
                 "response_method": response.request.method,
             }
             if raise_on_error:
@@ -282,7 +288,6 @@ class Account:
         self.account_id = account_id
         self.ils_cash = 0
         self.usd_cash = 0
-        self.update_cash_balances()
         self.order_id = None
         self.order_status = None
 
@@ -291,14 +296,10 @@ class Account:
         self.set_account()
 
     def initialize_ibkr_session(self):
-        self.session.post("/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True})
+        res = self.session.post("/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True})
 
     def set_account(self):
-        try:
-            self.session.post("/iserver/account", json_payload={"acctId": self.account_id})
-        except Exception as exc:
-            if len(exc.args) >= 1 and isinstance(exc.args[0], dict):
-                pass
+        result = self.session.post("/iserver/account", json_payload={"acctId": self.account_id}, raise_on_error=False)
 
     def update_cash_balances(self):
         ledger = self.session.get(f"/portfolio/{self.account_id}/ledger")
@@ -309,7 +310,12 @@ class Account:
                 self.usd_cash = data["cashbalance"]
 
     def convert_all_ils_to_usd(self):
-        return self.convert_to_usd(self.ils_cash)
+        TWO_DOLLAR_AMOUNT = 4
+        amount_to_convert = self.ils_cash - TWO_DOLLAR_AMOUNT
+        if amount_to_convert < 0:
+            logger.error(f"Amount to convert would make balance negative: {self.ils_cash=} {amount_to_convert=}")
+            return
+        return self.convert_to_usd()
 
     def convert_to_usd(self, amount_in_ils: float):
         data = {
@@ -318,22 +324,30 @@ class Account:
                 "ticker": self.TICKER,
                 "fxQty": amount_in_ils,
                 "isCcyConv": True,
-                "order_type": "MKT",
+                "orderType": "MKT",
                 "side": "BUY",
                 "tif": "DAY",
-                "cOID": f"{amount_in_ils} ILS -> USD"
+                "cOID": f"'{amount_in_ils} ILS -> USD'"
             }]
         }
         logger.info("Currency Conversion")
         result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload=data)
-        if "error" in result:
-            raise Exception(f"Currency conversion order did not go through: {result['error']=}")
-        elif "id" in result:
+        logger.info(f"Received result: {result}")
+        if isinstance(result, list):
+            result = result[0]
+        if "id" in result:
             logger.error(f"Need to confirm first: {result['message']=}")
             confirmation_id = result["id"]
             result = self.session.post(f"/iserver/reply/{confirmation_id}", json_payload={"confirmed": True})
+        if "error" in result:
+            raise Exception(f"Currency conversion order did not go through: {result['error']=}")
+        logger.info(f"Received result: {result}")
         self.order_id = result["order_id"]
         self.order_status = result["order_status"]
+
+    def get_order_status(self):
+        result = self.session.get(f"/iserver/account/orders", params={ "force": "true"})
+        logger.info(f"Order status: {json.dumps(result, indent=2)}")
 
 
 @dataclass
@@ -373,14 +387,23 @@ def calculate_leftover_shares_to_purchase(investments, money_left: float, random
     return investments
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--live", action="store_true")
+    return parser.parse_args()
 
-def main():
+def main(live: bool = False):
     account_id = "U3492785"
     account = Account(account_id=account_id)
     account.initialize()
+    account.update_cash_balances()
 
+    logger.info(f"Account contains {account.ils_cash} ILS and {account.usd_cash} USD")
     logger.info(f"Converting {account.ils_cash} ILS to USD")
-    # account.convert_all_ils_to_usd()
+    if live is True:
+        account.convert_all_ils_to_usd()
+    account.get_order_status()
+    account.update_cash_balances()
     logger.info(f"Account now contains {account.ils_cash} ILS and {account.usd_cash} USD")
 
     portfolio = Portfolio(account_id=account_id)
@@ -413,8 +436,9 @@ def main():
     for investment in investments:
         logger.info(portfolio.get_position(investment.stock.symbol))
         logger.info(investment)
-        logger.info(f"offset %: {investment.offset_from_desired / total_offset*100}, shares %: {100*investment.shares_to_purchase / total_shares}")
+        logger.info(f"offset %: {investment.offset_from_desired / total_offset*100}, shares %: {100*investment.shares_to_purchase / total_shares}, shares: {investment.shares_to_purchase}")
         logger.info("")
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.live)
