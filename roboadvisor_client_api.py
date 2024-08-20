@@ -14,12 +14,15 @@ import urllib3
 
 from typing import Dict
 from urllib3.exceptions import InsecureRequestWarning
+from initial_login import login_to_ibkr
 
 urllib3.disable_warnings(category=InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class RequestException(Exception):
+    pass
 
 class IBKRSession:
     """Serves as the Session for the Interactive Brokers API."""
@@ -139,9 +142,7 @@ class IBKRSession:
                 "response_method": response.request.method,
             }
             if raise_on_error:
-                raise Exception(json.dumps(obj=error_dict, indent=4))
-
-            self.logger.error(msg=json.dumps(obj=error_dict, indent=4))
+                raise RequestException(error_dict)
             return error_dict
 
 
@@ -301,7 +302,15 @@ class Account:
         self.order_status = None
 
     def initialize(self):
-        self.initialize_ibkr_session()
+        try:
+            self.initialize_ibkr_session()
+        except RequestException as exc:
+            error_info = exc.args[0]
+            if error_info['error_code'] == 401:
+                login_to_ibkr()
+                self.initialize_ibkr_session()
+            else:
+                raise
         self.set_account()
 
     def initialize_ibkr_session(self):

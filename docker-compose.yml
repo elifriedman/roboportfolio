@@ -1,0 +1,11 @@
+services:
+  ibkr:
+    image: tws:latest # latest, stable, 10.21, 10.21.1p etc
+    ports:
+      - "127.0.0.1:5000:5000" # API access
+    ulimits:
+      nofile: 10000 # See FAQ
+  login:
+    image: selenium/standalone-firefox:4.20.0-20240425
+    ports:
+      - "127.0.0.1:4444:4444" # noVNC browser access
