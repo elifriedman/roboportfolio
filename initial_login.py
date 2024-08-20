@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 
+
 class ScreenShot:
     def __init__(self):
         self.reader = easyocr.Reader(["en"], gpu=False)
@@ -38,10 +39,8 @@ class ScreenShot:
         return out
 
 
-
-
 class SiteController:
-    def __init__(self, url: str="http://localhost:4444"):
+    def __init__(self, url: str = "http://localhost:4444"):
         self.driver = webdriver.Remote(url, options=webdriver.FirefoxOptions())
 
     def get(self, url):
@@ -69,11 +68,11 @@ class SiteController:
         x, y = x1 + offset, y1 + offset
         self.move_and_click(x, y)
 
-    def wait_for_text(self, text, timeout: int=120):
+    def wait_for_text(self, text, timeout: int = 120):
         wait = WebDriverWait(self.driver, timeout=timeout)
         wait.until(EC.presence_of_element_located((By.XPATH, f"//*[contains(text(), '{text}')]")))
 
-    
+
 def login_to_ibkr(url: str = "https://ibkr:5000"):
     site = SiteController()
     site.get(url)

@@ -21,8 +21,10 @@ urllib3.disable_warnings(category=InsecureRequestWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class RequestException(Exception):
     pass
+
 
 class IBKRSession:
     """Serves as the Session for the Interactive Brokers API."""
@@ -56,17 +58,35 @@ class IBKRSession:
         return self.make_request("get", endpoint=endpoint, params=params, raise_on_error=raise_on_error)
 
     def post(self, endpoint: str, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
-        return self.make_request("post", endpoint=endpoint, json_payload=json_payload, raise_on_error=raise_on_error)
+        return self.make_request(
+            "post",
+            endpoint=endpoint,
+            json_payload=json_payload,
+            raise_on_error=raise_on_error,
+        )
 
     def delete(
-        self, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True
+        self,
+        endpoint: str,
+        params: dict = None,
+        json_payload: dict = None,
+        raise_on_error: bool = True,
     ) -> Dict:
         return self.make_request(
-            "delete", endpoint=endpoint, params=params, json_payload=json_payload, raise_on_error=raise_on_error
+            "delete",
+            endpoint=endpoint,
+            params=params,
+            json_payload=json_payload,
+            raise_on_error=raise_on_error,
         )
 
     def make_request(
-        self, method: str, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True
+        self,
+        method: str,
+        endpoint: str,
+        params: dict = None,
+        json_payload: dict = None,
+        raise_on_error: bool = True,
     ) -> Dict:
         """Handles all the requests in the library.
 
@@ -161,7 +181,12 @@ class Stock:
     session = IBKRSession()
 
     def __init__(
-        self, symbol: str, conid: int = None, exchange: str = None, currency: str = None, session: IBKRSession = None
+        self,
+        symbol: str,
+        conid: int = None,
+        exchange: str = None,
+        currency: str = None,
+        session: IBKRSession = None,
     ):
         self.symbol = symbol
         self.conid = conid
@@ -210,7 +235,10 @@ class Stock:
         self.exchange = stock.exchange
 
     def update_latest_price(self, max_tries: int = 10, sleep_interval: float = 0.5):
-        self.session.get("/iserver/marketdata/snapshot", params={"conids": self.conid, "fields": Field.LAST_PRICE})
+        self.session.get(
+            "/iserver/marketdata/snapshot",
+            params={"conids": self.conid, "fields": Field.LAST_PRICE},
+        )
         for i in range(10):
             response = self.session.get("/iserver/marketdata/snapshot", params={"conids": self.conid})
             response = response[0]
@@ -306,7 +334,7 @@ class Account:
             self.initialize_ibkr_session()
         except RequestException as exc:
             error_info = exc.args[0]
-            if error_info['error_code'] == 401:
+            if error_info["error_code"] == 401:
                 login_to_ibkr()
                 self.initialize_ibkr_session()
             else:
@@ -317,7 +345,11 @@ class Account:
         res = self.session.post("/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True})
 
     def set_account(self):
-        result = self.session.post("/iserver/account", json_payload={"acctId": self.account_id}, raise_on_error=False)
+        result = self.session.post(
+            "/iserver/account",
+            json_payload={"acctId": self.account_id},
+            raise_on_error=False,
+        )
 
     def update_cash_balances(self):
         ledger = self.session.get(f"/portfolio/{self.account_id}/ledger")
