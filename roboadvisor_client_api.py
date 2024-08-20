@@ -55,10 +55,16 @@ class IBKRSession:
     def post(self, endpoint: str, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
         return self.make_request("post", endpoint=endpoint, json_payload=json_payload, raise_on_error=raise_on_error)
 
-    def delete(self, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
-        return self.make_request("delete", endpoint=endpoint, params=params, json_payload=json_payload, raise_on_error=raise_on_error)
+    def delete(
+        self, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True
+    ) -> Dict:
+        return self.make_request(
+            "delete", endpoint=endpoint, params=params, json_payload=json_payload, raise_on_error=raise_on_error
+        )
 
-    def make_request(self, method: str, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
+    def make_request(
+        self, method: str, endpoint: str, params: dict = None, json_payload: dict = None, raise_on_error: bool = True
+    ) -> Dict:
         """Handles all the requests in the library.
 
         ### Overview
@@ -149,6 +155,7 @@ class Field:
     def join(cls, **fields):
         return ",".join(fields)
 
+
 class Stock:
     session = IBKRSession()
 
@@ -175,7 +182,7 @@ class Stock:
             symbol=contract["ticker"],
             conid=contract["conid"],
             exchange=contract["listingExchange"],
-            currency=contract["currency"]
+            currency=contract["currency"],
         )
 
     @classmethod
@@ -201,7 +208,7 @@ class Stock:
         self.conid = stock.conid
         self.exchange = stock.exchange
 
-    def update_latest_price(self, max_tries: int = 10, sleep_interval: float=0.5):
+    def update_latest_price(self, max_tries: int = 10, sleep_interval: float = 0.5):
         self.session.get("/iserver/marketdata/snapshot", params={"conids": self.conid, "fields": Field.LAST_PRICE})
         for i in range(10):
             response = self.session.get("/iserver/marketdata/snapshot", params={"conids": self.conid})
@@ -226,11 +233,13 @@ class Stock:
         price = self.price
         return f"Stock({symbol=}, {conid=}, {exchange=}, {price=})"
 
+
 @dataclass
 class Position:
     stock: Stock
     num_shares: float
     market_value: float
+
 
 class Portfolio:
 
@@ -270,14 +279,14 @@ class Portfolio:
         if len(position) == 0:
             if create_if_needed is True:
                 stock = stock if stock is not None else Stock.by_symbol(symbol)
-                return Position(stock, num_shares=0., market_value=0.)
+                return Position(stock, num_shares=0.0, market_value=0.0)
             raise Exception(f"You currently don't own any {symbol=}")
         position = position[0]
         return position
 
     def total_value(self):
         return sum([position.market_value for position in self.positions])
-            
+
 
 class Account:
     TICKER = "USD.ILS"
@@ -319,16 +328,18 @@ class Account:
 
     def convert_to_usd(self, amount_in_ils: float):
         data = {
-            "orders": [{
-                "conid": self.USD_ILS_CONID,
-                "ticker": self.TICKER,
-                "fxQty": amount_in_ils,
-                "isCcyConv": True,
-                "orderType": "MKT",
-                "side": "BUY",
-                "tif": "DAY",
-                "cOID": f"'{amount_in_ils} ILS -> USD'"
-            }]
+            "orders": [
+                {
+                    "conid": self.USD_ILS_CONID,
+                    "ticker": self.TICKER,
+                    "fxQty": amount_in_ils,
+                    "isCcyConv": True,
+                    "orderType": "MKT",
+                    "side": "BUY",
+                    "tif": "DAY",
+                    "cOID": f"'{amount_in_ils} ILS -> USD'",
+                }
+            ]
         }
         logger.info("Currency Conversion")
         result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload=data)
@@ -346,7 +357,7 @@ class Account:
         self.order_status = result["order_status"]
 
     def get_order_status(self):
-        result = self.session.get(f"/iserver/account/orders", params={ "force": "true"})
+        result = self.session.get(f"/iserver/account/orders", params={"force": "true"})
         logger.info(f"Order status: {json.dumps(result, indent=2)}")
 
 
@@ -355,7 +366,9 @@ class InvestmentPlan:
     stock: Stock
     allocation: float
     shares_to_purchase: int = 0
+    shares_desired: float = 0
     offset_from_desired: float = 0
+
 
 class PlanReader:
     @classmethod
@@ -375,15 +388,17 @@ class PlanReader:
             return [row for row in dr]
 
 
-def calculate_leftover_shares_to_purchase(investments, money_left: float, randomly: bool = True):
+def calculate_leftover_shares_to_purchase(investments: list[InvestmentPlan], money_left: float, by_offset: bool = True):
     idxs = list(range(len(investments)))
-    if randomly is True:
+    if by_offset is True:
+        idxs = sorted(idxs, key=lambda idx: investments[idx].shares_desired, reverse=True)
+    else:
         random.shuffle(idxs)
     for idx in idxs:
         investment = investments[idx]
         if investment.stock.price <= money_left:
             investment.shares_to_purchase += 1
-            money_left -= investment.stock.price 
+            money_left -= investment.stock.price
     return investments
 
 
@@ -391,6 +406,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
     return parser.parse_args()
+
 
 def main(live: bool = False):
     account_id = "U3492785"
@@ -419,25 +435,33 @@ def main(live: bool = False):
     money_left = 0.0
     for investment in investments:
         position = portfolio.get_position(stock=investment.stock, create_if_needed=True)
-        stock_price = position.stock.update_latest_price()
-        investment.stock.price = stock_price
+        investment.stock.price = position.stock.update_latest_price()
         desired_value = investment.allocation * total_value
-        value_to_purchase = (desired_value - position.market_value)
+        value_to_purchase = desired_value - position.market_value
         investment.offset_from_desired = value_to_purchase
-        shares_to_purchase = value_to_purchase / stock_price
+        investment.shares_desired = value_to_purchase / investment.stock.price
+    total_offset = sum([i.offset_from_desired for i in investments if i.offset_from_desired > 0])
+    for investment in investments:
+        fraction_of_allocation = investment.offset_from_desired / total_offset
+        value_to_purchase = account.usd_cash * fraction_of_allocation
+        shares_to_purchase = value_to_purchase / investment.stock.price
         func = math.floor if shares_to_purchase > 0 else math.ceil
         nonfractional_num_shares = int(func(shares_to_purchase))
-        investment.shares_to_purchase = nonfractional_num_shares 
+        investment.shares_to_purchase = nonfractional_num_shares
         leftover_money = (shares_to_purchase - nonfractional_num_shares) * position.stock.price
+        leftover_money = max(leftover_money, 0)
         money_left += leftover_money
-    investments = calculate_leftover_shares_to_purchase(investments, money_left=money_left, randomly=True)
-    total_offset = sum([i.offset_from_desired for i in investments])
-    total_shares = sum([i.shares_to_purchase for i in investments])
+
+    investments = calculate_leftover_shares_to_purchase(investments, money_left=money_left, by_offset=True)
+    total_shares = sum([i.shares_to_purchase for i in investments if i.shares_to_purchase > 0])
     for investment in investments:
         logger.info(portfolio.get_position(investment.stock.symbol))
         logger.info(investment)
-        logger.info(f"offset %: {investment.offset_from_desired / total_offset*100}, shares %: {100*investment.shares_to_purchase / total_shares}, shares: {investment.shares_to_purchase}")
+        logger.info(
+            f"offset %: {investment.offset_from_desired / total_offset*100:0.02f}, shares %: {100*investment.shares_to_purchase / total_shares:0.02f}, shares: {investment.shares_to_purchase}"
+        )
         logger.info("")
+
 
 if __name__ == "__main__":
     args = parse_args()
