@@ -317,6 +317,50 @@ class Portfolio:
         return sum([position.market_value for position in self.positions])
 
 
+class Order:
+    session = IBKRSession()
+
+    def __init__(self, account_id: int):
+        self.account_id = account_id
+        self.order_id = None
+        self.order_status = None
+
+    def order(self, side: str, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
+        assert type.upper() in ["MKT", "LMT"], f"type must be 'MKT' or 'LMT' not {type}"
+        assert side.upper() in ["BUY", "SELL"], f"type must be 'BUY' or 'SELL' not {side}"
+        order = {"conid": stock.conid, "side": side, "orderType": type, "quantity": num_shares, "tif": "DAY"}
+        if type == "LMT":
+            if price is None:
+                price = stock.price
+            order["price"] = price
+        result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload={"orders": [order]})
+        if isinstance(result, list):
+            result = result[0]
+        if "id" in result:
+            logger.error(f"Need to confirm first: {result['message']=}")
+            confirmation_id = result["id"]
+            result = self.session.post(f"/iserver/reply/{confirmation_id}", json_payload={"confirmed": True})
+        if isinstance(result, list):
+            result = result[0]
+        if "error" in result:
+            raise Exception(f"Order did not go through: {result['error']=}")
+        self.order_id = result.get("order_id")
+        self.order_status = result.get("status")
+        return result
+
+    def buy(self, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
+        return self.order(side="BUY", stock=stock, num_shares=num_shares, type=type, price=price)
+
+    def sell(self, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
+        return self.order(side="SELL", stock=stock, num_shares=num_shares, type=type, price=price)
+
+    def update_status(self):
+        results = self.session.get(f"/iserver/account/orders", params={"force": "true", "accountId": self.account_id})
+        logger.info(f"Order status: {json.dumps(results, indent=2)}")
+        self.order_status = results["orders"]
+        return results
+
+
 class Account:
     TICKER = "USD.ILS"
     USD_ILS_CONID = 44495102
@@ -400,6 +444,7 @@ class Account:
     def get_order_status(self):
         result = self.session.get(f"/iserver/account/orders", params={"force": "true"})
         logger.info(f"Order status: {json.dumps(result, indent=2)}")
+        return result
 
 
 @dataclass
@@ -495,13 +540,24 @@ def main(live: bool = False):
 
     investments = calculate_leftover_shares_to_purchase(investments, money_left=money_left, by_offset=True)
     total_shares = sum([i.shares_to_purchase for i in investments if i.shares_to_purchase > 0])
+    logger.info("Total share value: {total_shares:0.02f}")
     for investment in investments:
         logger.info(portfolio.get_position(investment.stock.symbol))
         logger.info(investment)
-        logger.info(
-            f"offset %: {investment.offset_from_desired / total_offset*100:0.02f}, shares %: {100*investment.shares_to_purchase / total_shares:0.02f}, shares: {investment.shares_to_purchase}"
-        )
-        logger.info("")
+        if investment.shares_to_purchase <= 0:
+            continue
+        logger.info(f"Buying {investment.shares_to_purchase} of {investment.stock}")
+        if live is True:
+            try:
+                result = Order(account_id=account.account_id).buy(
+                    stock=investment.stock, num_shares=investment.shares_to_purchase
+                )
+                logger.info(f"Received result {json.dumps(result, indent=4)}")
+            except Exception as exc:
+                logger.exception("Uh oh problem with order", exc_info=exc)
+    if live is not True:
+        result = Order(account_id=account.account_id).update_status()
+        logger.info(f"Received result {json.dumps(result, indent=4)}")
 
 
 if __name__ == "__main__":
