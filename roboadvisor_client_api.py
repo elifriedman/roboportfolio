@@ -12,158 +12,14 @@ import requests
 import logging
 import urllib3
 
-from typing import Dict
 from urllib3.exceptions import InsecureRequestWarning
 from initial_login import login_to_ibkr
+from ibkr_session import IBKRSession, RequestException
 
 urllib3.disable_warnings(category=InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-class RequestException(Exception):
-    pass
-
-
-class IBKRSession:
-    """Serves as the Session for the Interactive Brokers API."""
-
-    def __init__(self, url: str = "https://localhost:5000/v1/api/") -> None:
-        """Initializes the `InteractiveBrokersSession` client.
-
-        ### Overview
-        ----
-        The `InteractiveBrokersSession` object handles all the requests made
-        for the different endpoints on the Interactive Brokers API.
-
-        ### Parameters
-        ----
-        client : object
-            The `InteractiveBrokersClient` Python Client.
-
-        ### Usage:
-        ----
-            >>> ib_session = InteractiveBrokersSession()
-        """
-        self.resource_url = url
-        self.logger = logging.getLogger(f"{logger.name}.session")
-        self.logger.setLevel(logging.ERROR)
-
-    def build_url(self, endpoint: str) -> str:
-        url = self.resource_url + endpoint
-        return url
-
-    def get(self, endpoint: str, params: dict = None, raise_on_error: bool = True) -> Dict:
-        return self.make_request("get", endpoint=endpoint, params=params, raise_on_error=raise_on_error)
-
-    def post(self, endpoint: str, json_payload: dict = None, raise_on_error: bool = True) -> Dict:
-        return self.make_request(
-            "post",
-            endpoint=endpoint,
-            json_payload=json_payload,
-            raise_on_error=raise_on_error,
-        )
-
-    def delete(
-        self,
-        endpoint: str,
-        params: dict = None,
-        json_payload: dict = None,
-        raise_on_error: bool = True,
-    ) -> Dict:
-        return self.make_request(
-            "delete",
-            endpoint=endpoint,
-            params=params,
-            json_payload=json_payload,
-            raise_on_error=raise_on_error,
-        )
-
-    def make_request(
-        self,
-        method: str,
-        endpoint: str,
-        params: dict = None,
-        json_payload: dict = None,
-        raise_on_error: bool = True,
-    ) -> Dict:
-        """Handles all the requests in the library.
-
-        ### Overview
-        ---
-        A central function used to handle all the requests made in the library,
-        this function handles building the URL, defining Content-Type, passing
-        through payloads, and handling any errors that may arise during the
-        request.
-
-        ### Parameters
-        ----
-        method : str
-            The Request method, can be one of the following:
-            ['get','post','put','delete','patch']
-
-        endpoint : str
-            The API URL endpoint, example is 'quotes'
-
-        params : dict (optional, Default={})
-            The URL params for the request.
-
-        data : dict (optional, Default={})
-        A data payload for a request.
-
-        json_payload : dict (optional, Default={})
-            A json data payload for a request
-
-        ### Returns
-        ----
-        Dict:
-            A Dictionary object containing the
-            JSON values.
-        """
-
-        url = self.build_url(endpoint=endpoint)
-        self.logger.info(msg="------------------------")
-        self.logger.info(msg=f"Request Method: {method}")
-        self.logger.info(msg="URL: {url}".format(url=url))
-        self.logger.info(msg=f"Params: {params}")
-        self.logger.info(msg=f"JSON Payload: {json_payload}")
-        if method == "post":
-            response = requests.post(url=url, params=params, json=json_payload, verify=False)
-        elif method == "get":
-            response = requests.get(url=url, params=params, json=json_payload, verify=False)
-        elif method == "delete":
-            response = requests.delete(url=url, params=params, json=json_payload, verify=False)
-        self.logger.info(msg=f"Response Status Code: {response.status_code}")
-        self.logger.info(msg=f"Response Content: {response.text}")
-
-        if response.ok and len(response.content) > 0:
-            return response.json()
-        elif not response.ok:
-            if len(response.content) == 0:
-                response_data = ""
-            else:
-                try:
-                    response_data = response.json()
-                except:
-                    response_data = response.text
-
-            error_dict = {
-                "error_code": response.status_code,
-                "error_reason": response.reason,
-                "response_url": response.url,
-                "response_body": response_data,
-                "response_request": {
-                    "url": url,
-                    "params": params,
-                    "json": json_payload,
-                    **dict(response.request.headers),
-                },
-                "response_method": response.request.method,
-            }
-            if raise_on_error:
-                raise RequestException(error_dict)
-            return error_dict
 
 
 class Field:
@@ -234,6 +90,32 @@ class Stock:
         self.conid = stock.conid
         self.exchange = stock.exchange
 
+    @classmethod
+    def update_prices(cls, stocks: list["Stock"], max_tries: int = 10, sleep_interval: float = 0.5):
+        # TODO fix
+        conid2stock = {stock.conid: stock for stock in stocks}
+        conid_str = ",".join([str(stock.conid) for stock in stocks])
+        for i in range(max_tries):
+            responses = cls.session.get(
+                "/iserver/marketdata/snapshot", params={"conids": conid_str, "fields": Field.LAST_PRICE}
+            )
+            updated = False
+            for response in responses:
+                if Field.LAST_PRICE in response:
+                    updated = True
+                    try:
+                        price = response[Field.LAST_PRICE]
+                        price_without_close_prefix = price.replace("C", "")
+                        conid2stock[response["conid"]].price = float(price_without_close_prefix)
+                        conid2stock[response["conid"]].price_updated = time.time()
+                    except ValueError:
+                        print(f"Problem getting price: {response=}")
+                        raise
+            if updated:
+                return stocks
+            time.sleep(sleep_interval)
+        raise TimeoutError(f"Could not get latest price for {self}. Last response: {response}")
+
     def update_latest_price(self, max_tries: int = 10, sleep_interval: float = 0.5):
         self.session.get(
             "/iserver/marketdata/snapshot",
@@ -301,13 +183,12 @@ class Portfolio:
                 positions.append(position)
         return positions
 
-    def get_position(self, symbol: str = None, stock: Stock = None, create_if_needed: bool = False) -> Position:
-        assert symbol is not None or stock is not None, f"Please provide a {symbol} or a {stock=}"
-        symbol = stock.symbol if stock is not None else symbol
+    def get_position(self, stock: Stock | str, create_if_needed: bool = False) -> Position:
+        symbol = stock.symbol if isinstance(stock, Stock) else str(stock)
         position = [p for p in self.positions if p.stock.symbol == symbol]
         if len(position) == 0:
             if create_if_needed is True:
-                stock = stock if stock is not None else Stock.by_symbol(symbol)
+                stock = stock if isinstance(stock, Stock) else Stock.by_symbol(symbol)
                 return Position(stock, num_shares=0.0, market_value=0.0)
             raise Exception(f"You currently don't own any {symbol=}")
         position = position[0]
@@ -455,10 +336,13 @@ class InvestmentPlan:
     shares_desired: float = 0
     offset_from_desired: float = 0
 
+    def update(self):
+        self.stock.update_latest_price()
+
 
 class PlanReader:
     @classmethod
-    def read_plan(cls, path: str) -> InvestmentPlan:
+    def read_plan(cls, path: str) -> list[InvestmentPlan]:
         rows = cls._load_file(path)
         investments = []
         for row in rows:
@@ -474,18 +358,49 @@ class PlanReader:
             return [row for row in dr]
 
 
-def calculate_leftover_shares_to_purchase(investments: list[InvestmentPlan], money_left: float, by_offset: bool = True):
-    idxs = list(range(len(investments)))
-    if by_offset is True:
-        idxs = sorted(idxs, key=lambda idx: investments[idx].shares_desired, reverse=True)
-    else:
-        random.shuffle(idxs)
-    for idx in idxs:
-        investment = investments[idx]
-        if investment.stock.price <= money_left:
-            investment.shares_to_purchase += 1
-            money_left -= investment.stock.price
-    return investments
+class InvestmentPlanStrategy:
+    def __init__(self, investments: list[InvestmentPlan]):
+        self.investments = investments
+
+    @property
+    def total_allocated(self):
+        return sum([investment.allocation for investment in self.investments])
+
+    def run(self, portfolio: Portfolio, cash_available: float):
+        total_value = portfolio.total_value() + cash_available
+        for investment in self.investments:
+            position = portfolio.get_position(stock=investment.stock, create_if_needed=True)
+            investment.stock.price = position.stock.update_latest_price()
+            desired_value = investment.allocation * total_value
+            value_to_purchase = desired_value - position.market_value
+            investment.offset_from_desired = value_to_purchase
+            investment.shares_desired = value_to_purchase / investment.stock.price
+        total_offset = sum([i.offset_from_desired for i in self.investments if i.offset_from_desired > 0])
+        money_left = 0.0
+        for investment in self.investments:
+            fraction_of_allocation = investment.offset_from_desired / total_offset
+            value_to_purchase = cash_available * fraction_of_allocation
+            shares_to_purchase = value_to_purchase / investment.stock.price
+            func = math.floor if shares_to_purchase > 0 else math.ceil
+            nonfractional_num_shares = int(func(shares_to_purchase))
+            investment.shares_to_purchase = nonfractional_num_shares
+            leftover_money = (shares_to_purchase - nonfractional_num_shares) * position.stock.price
+            leftover_money = max(leftover_money, 0)
+            money_left += leftover_money
+        return self.calculate_leftover_shares_to_purchase(money_left=money_left)
+
+    def calculate_leftover_shares_to_purchase(self, money_left: float, by_offset: bool = True):
+        idxs = list(range(len(self.investments)))
+        if by_offset is True:
+            idxs = sorted(idxs, key=lambda idx: self.investments[idx].shares_desired, reverse=True)
+        else:
+            random.shuffle(idxs)
+        for idx in idxs:
+            investment = self.investments[idx]
+            if investment.stock.price <= money_left:
+                investment.shares_to_purchase += 1
+                money_left -= investment.stock.price
+        return self.investments
 
 
 def parse_args():
@@ -494,11 +409,16 @@ def parse_args():
     return parser.parse_args()
 
 
-def main(live: bool = False):
-    account_id = "U3492785"
+def login(account_id) -> Account:
     account = Account(account_id=account_id)
     account.initialize()
     account.update_cash_balances()
+    return account
+
+
+def main(live: bool = False):
+    account_id = "U3492785"
+    account = login(accound_id=account_id)
 
     logger.info(f"Account contains {account.ils_cash} ILS and {account.usd_cash} USD")
     logger.info(f"Converting {account.ils_cash} ILS to USD")
@@ -518,28 +438,9 @@ def main(live: bool = False):
     if total_fraction != 1.0:
         raise Exception(f"Allocation values don't sum to 1: {total_fraction=}")
 
-    money_left = 0.0
-    for investment in investments:
-        position = portfolio.get_position(stock=investment.stock, create_if_needed=True)
-        investment.stock.price = position.stock.update_latest_price()
-        desired_value = investment.allocation * total_value
-        value_to_purchase = desired_value - position.market_value
-        investment.offset_from_desired = value_to_purchase
-        investment.shares_desired = value_to_purchase / investment.stock.price
-    total_offset = sum([i.offset_from_desired for i in investments if i.offset_from_desired > 0])
-    for investment in investments:
-        fraction_of_allocation = investment.offset_from_desired / total_offset
-        value_to_purchase = account.usd_cash * fraction_of_allocation
-        shares_to_purchase = value_to_purchase / investment.stock.price
-        func = math.floor if shares_to_purchase > 0 else math.ceil
-        nonfractional_num_shares = int(func(shares_to_purchase))
-        investment.shares_to_purchase = nonfractional_num_shares
-        leftover_money = (shares_to_purchase - nonfractional_num_shares) * position.stock.price
-        leftover_money = max(leftover_money, 0)
-        money_left += leftover_money
-
-    investments = calculate_leftover_shares_to_purchase(investments, money_left=money_left, by_offset=True)
-    total_shares = sum([i.shares_to_purchase for i in investments if i.shares_to_purchase > 0])
+    investments = InvestmentPlanStrategy(investments=investments).run(
+        portfolio=portfolio, cash_available=account.usd_cash
+    )
     logger.info("Total share value: {total_shares:0.02f}")
     for investment in investments:
         logger.info(portfolio.get_position(investment.stock.symbol))
