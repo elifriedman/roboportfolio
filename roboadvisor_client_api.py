@@ -18,7 +18,7 @@ from ibkr_session import IBKRSession, RequestException
 
 urllib3.disable_warnings(category=InsecureRequestWarning)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(funcName)s:%(lineno)d:%(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -97,9 +97,11 @@ class Stock:
         conid_str = ",".join([str(stock.conid) for stock in stocks])
         for i in range(max_tries):
             responses = cls.session.get(
-                "/iserver/marketdata/snapshot", params={"conids": conid_str, "fields": Field.LAST_PRICE}
+                "/iserver/marketdata/snapshot",
+                params={"conids": conid_str, "fields": Field.LAST_PRICE},
             )
             updated = False
+            assert len(responses) == len(stocks), len(responses)
             for response in responses:
                 if Field.LAST_PRICE in response:
                     updated = True
@@ -117,25 +119,8 @@ class Stock:
         raise TimeoutError(f"Could not get latest price for {self}. Last response: {response}")
 
     def update_latest_price(self, max_tries: int = 10, sleep_interval: float = 0.5):
-        self.session.get(
-            "/iserver/marketdata/snapshot",
-            params={"conids": self.conid, "fields": Field.LAST_PRICE},
-        )
-        for i in range(10):
-            response = self.session.get("/iserver/marketdata/snapshot", params={"conids": self.conid})
-            response = response[0]
-            if Field.LAST_PRICE in response:
-                try:
-                    price = response[Field.LAST_PRICE]
-                    price_without_close_prefix = price.replace("C", "")
-                    self.price = float(price_without_close_prefix)
-                except ValueError:
-                    print(f"Problem getting price for {self.symbol=}: {response=}")
-                    raise
-                self.price_updated = time.time()
-                return self.price
-            time.sleep(sleep_interval)
-        raise TimeoutError(f"Could not get latest price for {self}. Last response: {response}")
+        self.update_prices(stocks=[self], max_tries=max_tries, sleep_interval=sleep_interval)
+        return self.price
 
     def __repr__(self):
         symbol = self.symbol
@@ -149,7 +134,16 @@ class Stock:
 class Position:
     stock: Stock
     num_shares: float
-    market_value: float
+    allocation: float = None
+    shares_to_purchase: int = 0
+    shares_desired: float = 0
+    offset_from_desired: float = 0
+
+    @property
+    def market_value(self):
+        if self.stock.price is None:
+            self.stock.update_latest_price()
+        return self.stock.price * self.num_shares
 
 
 class Portfolio:
@@ -159,6 +153,9 @@ class Portfolio:
         self.account_id = account_id
         self.positions = []
         self.update_positions()
+
+    def get_active_positions(self) -> list[Position]:
+        return
 
     def update_positions(self) -> list[Position]:
         self.positions = self.update_positions_for_account(self.account_id)
@@ -177,19 +174,25 @@ class Portfolio:
                     continue
                 symbol = row.get("ticker", row["contractDesc"])
                 stock = Stock(symbol=symbol, conid=row["conid"], currency=row["currency"])
-                position = self.get_position(stock=stock, create_if_needed=True)
+                position = self.get_position(stock=stock, add_if_needed=True)
                 position.num_shares = row["position"]
-                position.market_value = row["mktValue"]
                 positions.append(position)
         return positions
 
-    def get_position(self, stock: Stock | str, create_if_needed: bool = False) -> Position:
+    def add_position(self, position: Position):
+        existing_positions = [p for p in self.positions if p.stock.symbol == position.stock.symbol]
+        if len(existing_positions) == 0:
+            self.positions.append(position)
+
+    def get_position(self, stock: Stock | str, add_if_needed: bool = False) -> Position:
         symbol = stock.symbol if isinstance(stock, Stock) else str(stock)
         position = [p for p in self.positions if p.stock.symbol == symbol]
         if len(position) == 0:
-            if create_if_needed is True:
+            if add_if_needed is True:
                 stock = stock if isinstance(stock, Stock) else Stock.by_symbol(symbol)
-                return Position(stock, num_shares=0.0, market_value=0.0)
+                position = Position(stock, num_shares=0.0)
+                self.add_position(position)
+                return position
             raise Exception(f"You currently don't own any {symbol=}")
         position = position[0]
         return position
@@ -206,25 +209,43 @@ class Order:
         self.order_id = None
         self.order_status = None
 
-    def order(self, side: str, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
+    def handle_order_request(self, order_data: dict, auto_confirm: bool = True):
+        data = {"orders": [order_data]}
+        result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload=data)
+        logger.info(f"Received result: {result}")
+        if isinstance(result, list):
+            result = result[0]
+        while "id" in result:
+            logger.error(f"Need to confirm first: {result['message']=}")
+            confirmation_id = result["id"]
+            result = self.session.post(
+                f"/iserver/reply/{confirmation_id}", json_payload={"confirmed": True}
+            )
+            logger.info(f"Received confirmation result: {result}")
+            if isinstance(result, list):
+                result = result[0]
+        if "error" in result:
+            raise Exception(f"Currency conversion order did not go through: {result['error']=}")
+        logger.info(f"Received result: {result}")
+        return result
+
+    def order(
+        self, side: str, stock: Stock, num_shares: int, type: str = "MKT", price: float = None
+    ):
         assert type.upper() in ["MKT", "LMT"], f"type must be 'MKT' or 'LMT' not {type}"
         assert side.upper() in ["BUY", "SELL"], f"type must be 'BUY' or 'SELL' not {side}"
-        order = {"conid": stock.conid, "side": side, "orderType": type, "quantity": num_shares, "tif": "DAY"}
+        order = {
+            "conid": stock.conid,
+            "side": side,
+            "orderType": type,
+            "quantity": num_shares,
+            "tif": "DAY",
+        }
         if type == "LMT":
             if price is None:
                 price = stock.price
             order["price"] = price
-        result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload={"orders": [order]})
-        if isinstance(result, list):
-            result = result[0]
-        if "id" in result:
-            logger.error(f"Need to confirm first: {result['message']=}")
-            confirmation_id = result["id"]
-            result = self.session.post(f"/iserver/reply/{confirmation_id}", json_payload={"confirmed": True})
-        if isinstance(result, list):
-            result = result[0]
-        if "error" in result:
-            raise Exception(f"Order did not go through: {result['error']=}")
+        result = self.handle_order_request(order)
         self.order_id = result.get("order_id")
         self.order_status = result.get("status")
         return result
@@ -236,7 +257,9 @@ class Order:
         return self.order(side="SELL", stock=stock, num_shares=num_shares, type=type, price=price)
 
     def update_status(self):
-        results = self.session.get(f"/iserver/account/orders", params={"force": "true", "accountId": self.account_id})
+        results = self.session.get(
+            f"/iserver/account/orders", params={"force": "true", "accountId": self.account_id}
+        )
         logger.info(f"Order status: {json.dumps(results, indent=2)}")
         self.order_status = results["orders"]
         return results
@@ -267,7 +290,9 @@ class Account:
         self.set_account()
 
     def initialize_ibkr_session(self):
-        res = self.session.post("/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True})
+        res = self.session.post(
+            "/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True}
+        )
 
     def set_account(self):
         result = self.session.post(
@@ -285,42 +310,29 @@ class Account:
                 self.usd_cash = data["cashbalance"]
 
     def convert_all_ils_to_usd(self):
-        TWO_DOLLAR_AMOUNT = 4
-        amount_to_convert = self.ils_cash - TWO_DOLLAR_AMOUNT
-        if amount_to_convert < 0:
-            logger.error(f"Amount to convert would make balance negative: {self.ils_cash=} {amount_to_convert=}")
+        TWO_DOLLAR_AMOUNT = 8
+        amount_to_convert = self.ils_cash
+        if amount_to_convert < TWO_DOLLAR_AMOUNT:
+            logger.error(
+                f"Amount to convert would make balance negative: {self.ils_cash=} {amount_to_convert=}"
+            )
             return
-        return self.convert_to_usd()
+        return self.convert_to_usd(amount_to_convert)
 
     def convert_to_usd(self, amount_in_ils: float):
         data = {
-            "orders": [
-                {
-                    "conid": self.USD_ILS_CONID,
-                    "ticker": self.TICKER,
-                    "fxQty": amount_in_ils,
-                    "isCcyConv": True,
-                    "orderType": "MKT",
-                    "side": "BUY",
-                    "tif": "DAY",
-                    "cOID": f"'{amount_in_ils} ILS -> USD'",
-                }
-            ]
+            "conid": self.USD_ILS_CONID,
+            "ticker": self.TICKER,
+            "fxQty": amount_in_ils,
+            "isCcyConv": True,
+            "orderType": "MKT",
+            "side": "BUY",
+            "tif": "DAY",
+            "cOID": f"'{amount_in_ils} ILS -> USD'" + str(random.randint(0, 10000)),
         }
         logger.info("Currency Conversion")
-        result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload=data)
-        logger.info(f"Received result: {result}")
-        if isinstance(result, list):
-            result = result[0]
-        if "id" in result:
-            logger.error(f"Need to confirm first: {result['message']=}")
-            confirmation_id = result["id"]
-            result = self.session.post(f"/iserver/reply/{confirmation_id}", json_payload={"confirmed": True})
-        if "error" in result:
-            raise Exception(f"Currency conversion order did not go through: {result['error']=}")
-        logger.info(f"Received result: {result}")
-        self.order_id = result["order_id"]
-        self.order_status = result["order_status"]
+        result = Order(self.account_id).handle_order_request(data)
+        logger.info("Currency Conversion: all done!")
 
     def get_order_status(self):
         result = self.session.get(f"/iserver/account/orders", params={"force": "true"})
@@ -329,7 +341,7 @@ class Account:
 
 
 @dataclass
-class InvestmentPlan:
+class Investment:
     stock: Stock
     allocation: float
     shares_to_purchase: int = 0
@@ -342,13 +354,13 @@ class InvestmentPlan:
 
 class PlanReader:
     @classmethod
-    def read_plan(cls, path: str) -> list[InvestmentPlan]:
+    def update_portfolio(cls, path: str, portfolio: Portfolio) -> list[Position]:
         rows = cls._load_file(path)
         investments = []
         for row in rows:
-            stock = Stock.by_symbol(row["stock"])
-            allocation = float(row["allocation"])
-            investments.append(InvestmentPlan(stock, allocation))
+            position = portfolio.get_position(row["stock"], add_if_needed=True)
+            position.allocation = float(row["allocation"])
+            investments.append(position)
         return investments
 
     @classmethod
@@ -359,23 +371,29 @@ class PlanReader:
 
 
 class InvestmentPlanStrategy:
-    def __init__(self, investments: list[InvestmentPlan]):
+    def __init__(self, investments: list[Position]):
         self.investments = investments
 
     @property
     def total_allocated(self):
         return sum([investment.allocation for investment in self.investments])
 
-    def run(self, portfolio: Portfolio, cash_available: float):
+    def run(self, portfolio: Portfolio, cash_available: float) -> list[Position]:
+        Stock.update_prices([i.stock for i in self.investments])
+        print(self.investments)
+        if cash_available <= 0:
+            logger.info(f"No cash available :_( You have ${cash_available}")
+            return self.investments
         total_value = portfolio.total_value() + cash_available
         for investment in self.investments:
-            position = portfolio.get_position(stock=investment.stock, create_if_needed=True)
-            investment.stock.price = position.stock.update_latest_price()
+            position = portfolio.get_position(stock=investment.stock, add_if_needed=True)
             desired_value = investment.allocation * total_value
             value_to_purchase = desired_value - position.market_value
             investment.offset_from_desired = value_to_purchase
             investment.shares_desired = value_to_purchase / investment.stock.price
-        total_offset = sum([i.offset_from_desired for i in self.investments if i.offset_from_desired > 0])
+        total_offset = sum(
+            [i.offset_from_desired for i in self.investments if i.offset_from_desired > 0]
+        )
         money_left = 0.0
         for investment in self.investments:
             fraction_of_allocation = investment.offset_from_desired / total_offset
@@ -389,7 +407,9 @@ class InvestmentPlanStrategy:
             money_left += leftover_money
         return self.calculate_leftover_shares_to_purchase(money_left=money_left)
 
-    def calculate_leftover_shares_to_purchase(self, money_left: float, by_offset: bool = True):
+    def calculate_leftover_shares_to_purchase(
+        self, money_left: float, by_offset: bool = True
+    ) -> list[Position]:
         idxs = list(range(len(self.investments)))
         if by_offset is True:
             idxs = sorted(idxs, key=lambda idx: self.investments[idx].shares_desired, reverse=True)
@@ -405,6 +425,7 @@ class InvestmentPlanStrategy:
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--account_id", "-a", default="U3492785")
     parser.add_argument("--live", action="store_true")
     return parser.parse_args()
 
@@ -416,9 +437,8 @@ def login(account_id) -> Account:
     return account
 
 
-def main(live: bool = False):
-    account_id = "U3492785"
-    account = login(accound_id=account_id)
+def main(account_id, live: bool = False):
+    account = login(account_id=account_id)
 
     logger.info(f"Account contains {account.ils_cash} ILS and {account.usd_cash} USD")
     logger.info(f"Converting {account.ils_cash} ILS to USD")
@@ -433,7 +453,7 @@ def main(live: bool = False):
     total_value = portfolio_value + account.usd_cash
     logger.info(f"{portfolio_value=}, USD cash={account.usd_cash}, {total_value=}")
 
-    investments = PlanReader.read_plan("config/allocation.csv")
+    investments = PlanReader.update_portfolio("config/allocation.csv", portfolio)
     total_fraction = sum([investment.allocation for investment in investments])
     if total_fraction != 1.0:
         raise Exception(f"Allocation values don't sum to 1: {total_fraction=}")
@@ -441,9 +461,7 @@ def main(live: bool = False):
     investments = InvestmentPlanStrategy(investments=investments).run(
         portfolio=portfolio, cash_available=account.usd_cash
     )
-    logger.info("Total share value: {total_shares:0.02f}")
     for investment in investments:
-        logger.info(portfolio.get_position(investment.stock.symbol))
         logger.info(investment)
         if investment.shares_to_purchase <= 0:
             continue
@@ -456,11 +474,10 @@ def main(live: bool = False):
                 logger.info(f"Received result {json.dumps(result, indent=4)}")
             except Exception as exc:
                 logger.exception("Uh oh problem with order", exc_info=exc)
-    if live is not True:
-        result = Order(account_id=account.account_id).update_status()
-        logger.info(f"Received result {json.dumps(result, indent=4)}")
+    result = Order(account_id=account.account_id).update_status()
+    logger.info(f"Received result {json.dumps(result, indent=4)}")
 
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.live)
+    main(args.account_id, args.live)

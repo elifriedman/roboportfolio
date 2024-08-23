@@ -78,7 +78,7 @@ def login_to_ibkr(url: str = "https://ibkr:5000"):
     site.get(url)
     screenshotter = ScreenShot()
     screenshotter.new_screenshot(site.driver)
-    site.find_and_enter_text("Username", "elfman054", screenshotter)
+    site.find_and_enter_text("Username", os.environ.get("USER", "elfman054"), screenshotter)
     site.find_and_enter_text("Password", os.environ["PASS"], screenshotter)
     site.find_and_click("Login", screenshotter, which_index=1)
     site.wait_for_text(text="succeeds", timeout=240)

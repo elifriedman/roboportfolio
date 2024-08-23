@@ -6,7 +6,8 @@ services:
     ulimits:
       nofile: 10000 # See FAQ
   login:
+    shm_size: 2gb
     image: selenium/standalone-firefox:4.20.0-20240425
     ports:
       - "127.0.0.1:4444:4444" # Selenium API access
-      # - "127.0.0.1:7900:7900" # noVNC browser access
+      - "127.0.0.1:7900:7900" # noVNC browser access
