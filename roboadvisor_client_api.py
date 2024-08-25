@@ -6,6 +6,7 @@ import csv
 from dataclasses import dataclass
 import math
 import random
+import threading
 import time
 import json
 import requests
@@ -20,6 +21,10 @@ urllib3.disable_warnings(category=InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(funcName)s:%(lineno)d:%(message)s")
 logger = logging.getLogger(__name__)
+
+
+class OrderException(Exception):
+    pass
 
 
 class Field:
@@ -225,7 +230,9 @@ class Order:
             if isinstance(result, list):
                 result = result[0]
         if "error" in result:
-            raise Exception(f"Currency conversion order did not go through: {result['error']=}")
+            raise OrderException(
+                f"Currency conversion order did not go through: {result['error']=}"
+            )
         logger.info(f"Received result: {result}")
         return result
 
@@ -293,6 +300,19 @@ class Account:
         res = self.session.post(
             "/iserver/auth/ssodh/init", json_payload={"publish": True, "compete": True}
         )
+
+    def renew_connection(self, run_continously: bool = True, run_every: float = 30):
+        if run_continously is False:
+            self.session.post("/tickle")
+            return
+        else:
+            while True:
+                self.session.post("/tickle")
+                time.sleep(run_every)
+
+    def keep_connection_alive(self):
+        self.alive_thread = threading.Thread(target=self.renew_connection, daemon=True)
+        self.alive_thread.start()
 
     def set_account(self):
         result = self.session.post(
@@ -434,6 +454,7 @@ def login(account_id) -> Account:
     account = Account(account_id=account_id)
     account.initialize()
     account.update_cash_balances()
+    account.keep_connection_alive()
     return account
 
 
