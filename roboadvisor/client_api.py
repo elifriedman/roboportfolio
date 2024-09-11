@@ -14,8 +14,8 @@ import logging
 import urllib3
 
 from urllib3.exceptions import InsecureRequestWarning
-from initial_login import login_to_ibkr
-from ibkr_session import IBKRSession, RequestException
+from roboadvisor.initial_login import login_to_ibkr
+from roboadvisor.ibkr_session import IBKRSession, RequestException
 
 urllib3.disable_warnings(category=InsecureRequestWarning)
 

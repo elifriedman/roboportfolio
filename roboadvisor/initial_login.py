@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
-def load_dotenv(env_path=Path(__file__).parent / ".env"):
+
+def load_dotenv(env_path=Path(__file__).parent.parent / ".env"):
     if not Path(env_path).exists():
         print(
             f"!!ERROR!! Please put create a file called `.env` file with your username and password"
@@ -13,6 +14,7 @@ def load_dotenv(env_path=Path(__file__).parent / ".env"):
             line = line.strip()
             key, value = line.split("=")
             os.environ[key] = value
+
 
 load_dotenv()
 
