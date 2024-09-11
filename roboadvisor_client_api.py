@@ -61,10 +61,12 @@ class Stock:
         self.price_updated = None
 
     @classmethod
-    def by_conid(cls, conid: str, session: IBKRSession = None):
+    def by_conid(cls, conid: str, exchange: str = None, session: IBKRSession = None):
         session = cls.session if session is None else session
         result = session.get("trsrv/secdef", params={"conids": str(conid)})
         contract = result["secdef"][0]
+        if "error" in contract:
+            raise LookupError(f"{json.dumps(result, indent=2)}")
         return cls(
             symbol=contract["ticker"],
             conid=contract["conid"],
@@ -230,9 +232,7 @@ class Order:
             if isinstance(result, list):
                 result = result[0]
         if "error" in result:
-            raise OrderException(
-                f"Currency conversion order did not go through: {result['error']=}"
-            )
+            raise OrderException(f"Order did not go through: {result['error']=}")
         logger.info(f"Received result: {result}")
         return result
 
