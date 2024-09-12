@@ -158,7 +158,7 @@ class Portfolio:
     def __init__(self, account_id: int, session: IBKRSession = IBKRSession()):
         self.session = session
         self.account_id = account_id
-        self.positions = []
+        self.positions: list[Position] = []
         self.update_positions()
 
     def get_active_positions(self) -> list[Position]:
@@ -381,6 +381,10 @@ class PlanReader:
             position = portfolio.get_position(row["stock"], add_if_needed=True)
             position.allocation = float(row["allocation"])
             investments.append(position)
+
+        total_fraction = sum([investment.allocation for investment in investments])
+        if total_fraction != 1.0:
+            raise ValueError(f"Allocation values don't sum to 1: {total_fraction=}\n{investments}")
         return investments
 
     @classmethod
@@ -475,10 +479,6 @@ def main(account_id, live: bool = False):
     logger.info(f"{portfolio_value=}, USD cash={account.usd_cash}, {total_value=}")
 
     investments = PlanReader.update_portfolio("config/allocation.csv", portfolio)
-    total_fraction = sum([investment.allocation for investment in investments])
-    if total_fraction != 1.0:
-        raise Exception(f"Allocation values don't sum to 1: {total_fraction=}")
-
     investments = InvestmentPlanStrategy(investments=investments).run(
         portfolio=portfolio, cash_available=account.usd_cash
     )
