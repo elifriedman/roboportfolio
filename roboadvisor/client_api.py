@@ -213,13 +213,19 @@ class Order:
 
     def __init__(self, account_id: int):
         self.account_id = account_id
+        self.to_order = []
         self.order_id = None
         self.order_status = None
 
-    def handle_order_request(self, order_data: dict, auto_confirm: bool = True):
-        data = {"orders": [order_data]}
-        result = self.session.post(f"/iserver/account/{self.account_id}/orders", json_payload=data)
-        logger.info(f"Received result: {result}")
+    def handle_order_request(
+        self, orders_data: list[dict], auto_confirm: bool = True, live: bool = True
+    ):
+        data = {"orders": orders_data}
+        url = f"/iserver/account/{self.account_id}/orders"
+        if live is False:
+            url = f"{url}/whatif"
+        result = self.session.post(url, json_payload=data)
+        logger.info(f"Received result: {json.dumps(result, indent=4)}")
         if isinstance(result, list):
             result = result[0]
         while "id" in result:
@@ -231,13 +237,19 @@ class Order:
             logger.info(f"Received confirmation result: {result}")
             if isinstance(result, list):
                 result = result[0]
+        logger.info(f"Received result: {result}")
         if "error" in result:
             raise OrderException(f"Order did not go through: {result['error']=}")
-        logger.info(f"Received result: {result}")
         return result
 
-    def order(
-        self, side: str, stock: Stock, num_shares: int, type: str = "MKT", price: float = None
+    def make_order(
+        self,
+        side: str,
+        stock: Stock,
+        num_shares: int,
+        type: str = "MKT",
+        price: float = None,
+        add: bool = True,
     ):
         assert type.upper() in ["MKT", "LMT"], f"type must be 'MKT' or 'LMT' not {type}"
         assert side.upper() in ["BUY", "SELL"], f"type must be 'BUY' or 'SELL' not {side}"
@@ -252,20 +264,29 @@ class Order:
             if price is None:
                 price = stock.price
             order["price"] = price
-        result = self.handle_order_request(order)
+        if add is True:
+            self.to_order.append(order)
+        return order
+
+    def add_order(self, order: dict):
+        self.to_order.append(order)
+
+    def clear_orders(self):
+        self.to_order.clear()
+
+    def order(self, orders: list[dict] | dict = None, live: bool = True):
+        if orders is None:
+            orders = self.to_order
+        elif isinstance(orders, dict):
+            orders = [orders]
+        result = self.handle_order_request(orders, live=live)
         self.order_id = result.get("order_id")
         self.order_status = result.get("status")
         return result
 
-    def buy(self, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
-        return self.order(side="BUY", stock=stock, num_shares=num_shares, type=type, price=price)
-
-    def sell(self, stock: Stock, num_shares: int, type: str = "MKT", price: float = None):
-        return self.order(side="SELL", stock=stock, num_shares=num_shares, type=type, price=price)
-
     def update_status(self):
         results = self.session.get(
-            f"/iserver/account/orders", params={"force": "true", "accountId": self.account_id}
+            f"/iserver/account/orders", params={"accountId": self.account_id}
         )
         logger.info(f"Order status: {json.dumps(results, indent=2)}")
         self.order_status = results["orders"]
@@ -281,20 +302,30 @@ class Account:
         self.account_id = account_id
         self.ils_cash = 0
         self.usd_cash = 0
+        self.usd_tradable_cash = 0
         self.order_id = None
         self.order_status = None
 
     def initialize(self):
         try:
             self.initialize_ibkr_session()
+            self.set_account()
+            return True
         except RequestException as exc:
             error_info = exc.args[0]
             if error_info["error_code"] == 401:
-                login_to_ibkr()
-                self.initialize_ibkr_session()
+                return False
             else:
                 raise
-        self.set_account()
+
+    def login(self):
+        result = login_to_ibkr()
+        if result is True:
+            self.initialize_ibkr_session()
+            return True
+        else:
+            logger.error("Could not login but don't know why :-(")
+        return False
 
     def initialize_ibkr_session(self):
         res = self.session.post(
@@ -328,6 +359,11 @@ class Account:
                 self.ils_cash = data["cashbalance"]
             elif currency == "USD":
                 self.usd_cash = data["cashbalance"]
+        summary = self.session.get(f"/portfolio/{self.account_id}/summary")
+        for key, values in summary.items():
+            currency = values["currency"]
+            if key == "availabletotrade" and currency == "USD":
+                self.usd_tradable_cash = values["amount"]
 
     def convert_all_ils_to_usd(self):
         TWO_DOLLAR_AMOUNT = 8
@@ -395,16 +431,16 @@ class PlanReader:
 
 
 class InvestmentPlanStrategy:
-    def __init__(self, investments: list[Position]):
+    def __init__(self, account_id: str, investments: list[Position]):
+        self.account_id = account_id
         self.investments = investments
 
     @property
     def total_allocated(self):
         return sum([investment.allocation for investment in self.investments])
 
-    def run(self, portfolio: Portfolio, cash_available: float) -> list[Position]:
+    def run(self, portfolio: Portfolio, cash_available: float) -> "InvestmentPlanStrategy":
         Stock.update_prices([i.stock for i in self.investments])
-        print(self.investments)
         if cash_available <= 0:
             logger.info(f"No cash available :_( You have ${cash_available}")
             return self.investments
@@ -429,7 +465,31 @@ class InvestmentPlanStrategy:
             leftover_money = (shares_to_purchase - nonfractional_num_shares) * position.stock.price
             leftover_money = max(leftover_money, 0)
             money_left += leftover_money
-        return self.calculate_leftover_shares_to_purchase(money_left=money_left)
+        self.calculate_leftover_shares_to_purchase(money_left=money_left)
+        return self
+
+    def make_orders(self):
+        orders = Order(account_id=self.account_id)
+        for investment in self.investments:
+            logger.info(investment)
+            if investment.shares_to_purchase <= 0:
+                continue
+            logger.info(f"Buying {investment.shares_to_purchase} of {investment.stock}")
+            result = orders.make_order(
+                side="BUY",
+                stock=investment.stock,
+                num_shares=investment.shares_to_purchase,
+                add=True,
+            )
+            logger.info(f"Received result {json.dumps(result, indent=4)}")
+        return orders
+
+    def execute_orders(self, live: bool = True):
+        orders = self.make_orders()
+        try:
+            return orders.order(live=live)
+        except Exception as exc:
+            logger.exception("Uh oh problem with order", exc_info=exc)
 
     def calculate_leftover_shares_to_purchase(
         self, money_left: float, by_offset: bool = True
@@ -456,7 +516,9 @@ def parse_args():
 
 def login(account_id) -> Account:
     account = Account(account_id=account_id)
-    account.initialize()
+    is_logged_in = account.initialize()
+    if not is_logged_in:
+        account.login()
     account.update_cash_balances()
     account.keep_connection_alive()
     return account
@@ -479,22 +541,11 @@ def main(account_id, live: bool = False):
     logger.info(f"{portfolio_value=}, USD cash={account.usd_cash}, {total_value=}")
 
     investments = PlanReader.update_portfolio("config/allocation.csv", portfolio)
-    investments = InvestmentPlanStrategy(investments=investments).run(
+    investments = InvestmentPlanStrategy(account_id=account_id, investments=investments).run(
         portfolio=portfolio, cash_available=account.usd_cash
     )
-    for investment in investments:
-        logger.info(investment)
-        if investment.shares_to_purchase <= 0:
-            continue
-        logger.info(f"Buying {investment.shares_to_purchase} of {investment.stock}")
-        if live is True:
-            try:
-                result = Order(account_id=account.account_id).buy(
-                    stock=investment.stock, num_shares=investment.shares_to_purchase
-                )
-                logger.info(f"Received result {json.dumps(result, indent=4)}")
-            except Exception as exc:
-                logger.exception("Uh oh problem with order", exc_info=exc)
+    investments.execute_orders(live=live)
+
     result = Order(account_id=account.account_id).update_status()
     logger.info(f"Received result {json.dumps(result, indent=4)}")
 
