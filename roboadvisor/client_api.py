@@ -144,7 +144,7 @@ class Position:
     allocation: float = None
     shares_to_purchase: int = 0
     shares_desired: float = 0
-    offset_from_desired: float = 0
+    value_to_purchase: float = 0
 
     @property
     def market_value(self):
@@ -159,27 +159,32 @@ class Portfolio:
         self.session = session
         self.account_id = account_id
         self.positions: list[Position] = []
-        self.update_positions()
 
     def get_active_positions(self) -> list[Position]:
         return
 
-    def update_positions(self) -> list[Position]:
+    def update_current_positions(self) -> list[Position]: 
+        self.positions = self.update_positions_for_account(self.account_id, only_current=True)
+
+    def update_all_positions(self) -> list[Position]:
         self.positions = self.update_positions_for_account(self.account_id)
         return self.positions
 
-    def update_positions_for_account(self, account_id: int) -> list[Position]:
+    def update_positions_for_account(self, account_id: int, only_current: bool = False) -> list[Position]:
         finished = False
         page = 0
         positions = []
+        current_symbols = [position.stock.symbol for position in self.positions]
         while not finished:
             result = self.session.get(f"/portfolio/{account_id}/positions/{page}")
             page += 1
             finished = len(result) == 0
             for row in result:
+                symbol = row.get("ticker", row["contractDesc"])
                 if row["assetClass"] != "STK":
                     continue
-                symbol = row.get("ticker", row["contractDesc"])
+                if symbol not in current_symbols:
+                    continue
                 stock = Stock(symbol=symbol, conid=row["conid"], currency=row["currency"])
                 position = self.get_position(stock=stock, add_if_needed=True)
                 position.num_shares = row["position"]
@@ -225,7 +230,6 @@ class Order:
         if live is False:
             url = f"{url}/whatif"
         result = self.session.post(url, json_payload=data)
-        logger.info(f"Received result: {json.dumps(result, indent=4)}")
         if isinstance(result, list):
             result = result[0]
         while "id" in result:
@@ -238,8 +242,8 @@ class Order:
             if isinstance(result, list):
                 result = result[0]
         logger.info(f"Received result: {result}")
-        if "error" in result:
-            raise OrderException(f"Order did not go through: {result['error']=}")
+        if result.get("error") is not None:
+            raise OrderException(f"Order did not go through: {result=}")
         return result
 
     def make_order(
@@ -264,20 +268,10 @@ class Order:
             if price is None:
                 price = stock.price
             order["price"] = price
-        if add is True:
-            self.to_order.append(order)
         return order
 
-    def add_order(self, order: dict):
-        self.to_order.append(order)
-
-    def clear_orders(self):
-        self.to_order.clear()
-
-    def order(self, orders: list[dict] | dict = None, live: bool = True):
-        if orders is None:
-            orders = self.to_order
-        elif isinstance(orders, dict):
+    def order(self, orders: list[dict] | dict, live: bool = True):
+        if isinstance(orders, dict):
             orders = [orders]
         result = self.handle_order_request(orders, live=live)
         self.order_id = result.get("order_id")
@@ -402,7 +396,7 @@ class Investment:
     allocation: float
     shares_to_purchase: int = 0
     shares_desired: float = 0
-    offset_from_desired: float = 0
+    value_to_purchase: float = 0
 
     def update(self):
         self.stock.update_latest_price()
@@ -418,6 +412,7 @@ class PlanReader:
             position.allocation = float(row["allocation"])
             investments.append(position)
 
+        portfolio.update_current_positions()
         total_fraction = sum([investment.allocation for investment in investments])
         if total_fraction != 1.0:
             raise ValueError(f"Allocation values don't sum to 1: {total_fraction=}\n{investments}")
@@ -449,14 +444,14 @@ class InvestmentPlanStrategy:
             position = portfolio.get_position(stock=investment.stock, add_if_needed=True)
             desired_value = investment.allocation * total_value
             value_to_purchase = desired_value - position.market_value
-            investment.offset_from_desired = value_to_purchase
+            investment.value_to_purchase = value_to_purchase
             investment.shares_desired = value_to_purchase / investment.stock.price
         total_offset = sum(
-            [i.offset_from_desired for i in self.investments if i.offset_from_desired > 0]
+            [i.value_to_purchase for i in self.investments if i.value_to_purchase > 0]
         )
         money_left = 0.0
         for investment in self.investments:
-            fraction_of_allocation = investment.offset_from_desired / total_offset
+            fraction_of_allocation = investment.value_to_purchase / total_offset
             value_to_purchase = cash_available * fraction_of_allocation
             shares_to_purchase = value_to_purchase / investment.stock.price
             func = math.floor if shares_to_purchase > 0 else math.ceil
@@ -470,24 +465,29 @@ class InvestmentPlanStrategy:
 
     def make_orders(self):
         orders = Order(account_id=self.account_id)
+        order_list = []
         for investment in self.investments:
             logger.info(investment)
             if investment.shares_to_purchase <= 0:
                 continue
-            logger.info(f"Buying {investment.shares_to_purchase} of {investment.stock}")
+            logger.info(f"Creating buy order for {investment.shares_to_purchase} of {investment.stock}")
             result = orders.make_order(
                 side="BUY",
                 stock=investment.stock,
                 num_shares=investment.shares_to_purchase,
                 add=True,
             )
-            logger.info(f"Received result {json.dumps(result, indent=4)}")
-        return orders
+            order_list.append(result)
+        return order_list
 
     def execute_orders(self, live: bool = True):
+        order = Order(account_id=self.account_id)
         orders = self.make_orders()
         try:
-            return orders.order(live=live)
+            results = []
+            for o in orders:
+                results.append(order.order(o, live=live))
+            return results
         except Exception as exc:
             logger.exception("Uh oh problem with order", exc_info=exc)
 
@@ -510,7 +510,8 @@ class InvestmentPlanStrategy:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--account_id", "-a", default="U3492785")
-    parser.add_argument("--live", action="store_true")
+    parser.add_argument("--live", "-l", action="store_true")
+    parser.add_argument("--max", "-m", type=float)
     return parser.parse_args()
 
 
@@ -524,7 +525,7 @@ def login(account_id) -> Account:
     return account
 
 
-def main(account_id, live: bool = False):
+def main(account_id, live: bool = False, max_to_trade: float = None):
     account = login(account_id=account_id)
 
     logger.info(f"Account contains {account.ils_cash} ILS and {account.usd_cash} USD")
@@ -535,21 +536,26 @@ def main(account_id, live: bool = False):
     account.update_cash_balances()
     logger.info(f"Account now contains {account.ils_cash} ILS and {account.usd_cash} USD")
 
-    portfolio = Portfolio(account_id=account_id)
-    portfolio_value = portfolio.total_value()
-    total_value = portfolio_value + account.usd_cash
-    logger.info(f"{portfolio_value=}, USD cash={account.usd_cash}, {total_value=}")
+    if max_to_trade is None:
+        max_to_trade = float('inf')
+    cash = min(max_to_trade, account.usd_cash)
 
+    portfolio = Portfolio(account_id=account_id)
     investments = PlanReader.update_portfolio("config/allocation.csv", portfolio)
+    portfolio_value = portfolio.total_value()
+    total_value = portfolio_value + cash
+    logger.info(f"{portfolio_value=}, USD cash={cash}, {total_value=}")
     investments = InvestmentPlanStrategy(account_id=account_id, investments=investments).run(
-        portfolio=portfolio, cash_available=account.usd_cash
+        portfolio=portfolio, cash_available=cash
     )
+    for investment in investments.investments:
+        logger.info(investment)
     investments.execute_orders(live=live)
 
     result = Order(account_id=account.account_id).update_status()
-    logger.info(f"Received result {json.dumps(result, indent=4)}")
+    logger.info(f"Received result {result}")
 
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args.account_id, args.live)
+    main(args.account_id, args.live, args.max)
