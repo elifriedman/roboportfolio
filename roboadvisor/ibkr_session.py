@@ -11,7 +11,7 @@ class RequestException(Exception):
 class IBKRSession:
     """Serves as the Session for the Interactive Brokers API."""
 
-    def __init__(self, url: str = "https://localhost:5000/v1/api/") -> None:
+    def __init__(self, url: str = "https://localhost:5000/v1/api") -> None:
         """Initializes the `InteractiveBrokersSession` client.
 
         ### Overview

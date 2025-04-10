@@ -63,7 +63,7 @@ class Stock:
     @classmethod
     def by_conid(cls, conid: str, exchange: str = None, session: IBKRSession = None):
         session = cls.session if session is None else session
-        result = session.get("trsrv/secdef", params={"conids": str(conid)})
+        result = session.get("/trsrv/secdef", params={"conids": str(conid)})
         contract = result["secdef"][0]
         if "error" in contract:
             raise LookupError(f"{json.dumps(result, indent=2)}")
@@ -78,7 +78,7 @@ class Stock:
     def by_symbol(cls, symbol: str, session: IBKRSession = None):
         session = cls.session if session is None else session
         params = {"symbols": symbol}
-        response = session.get("trsrv/stocks", params=params)
+        response = session.get("/trsrv/stocks", params=params)
         if "error_code" in response:
             raise Exception(response)
         results = response[symbol]
@@ -282,7 +282,7 @@ class Order:
         results = self.session.get(
             f"/iserver/account/orders", params={"accountId": self.account_id}
         )
-        logger.info(f"Order status: {json.dumps(results, indent=2)}")
+        logger.info(f"Order status: {json.dumps(results)}")
         self.order_status = results["orders"]
         return results
 
@@ -386,7 +386,7 @@ class Account:
 
     def get_order_status(self):
         result = self.session.get(f"/iserver/account/orders", params={"force": "true"})
-        logger.info(f"Order status: {json.dumps(result, indent=2)}")
+        logger.info(f"Order status: {json.dumps(result)}")
         return result
 
 
