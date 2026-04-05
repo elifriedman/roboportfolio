@@ -316,6 +316,28 @@ async function apiFetch(method, path, body) {
   return json;
 }
 
+// ── Page load: skip login if already authenticated ─────────────────────────
+(async function checkAuthOnLoad() {
+  try {
+    const status = await apiFetch('GET', '/api/auth-status');
+    if (status.authenticated) {
+      if (status.account_selected) {
+        $('step-login').hidden = true;
+        $('dashboard').hidden = false;
+        await loadCash();
+        await checkAllocation();
+      } else {
+        $('step-login').hidden = true;
+        await loadAccounts();
+      }
+    } else if (status.reason === 'session_expired') {
+      setStatus('login-status', 'Your session expired. Please log in again.');
+    }
+  } catch (_) {
+    // Gateway unreachable — show login form normally
+  }
+})();
+
 // ── Step 1: Login ──────────────────────────────────────────────────────────
 $('btn-login').addEventListener('click', doLogin);
 $('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
@@ -334,6 +356,13 @@ async function doLogin() {
   try {
     const data = await apiFetch('POST', '/api/login', { username, password });
     $('login-password').value = '';
+    if (data.already_logged_in && data.account_selected) {
+      $('step-login').hidden = true;
+      $('dashboard').hidden = false;
+      await loadCash();
+      await checkAllocation();
+      return;
+    }
     if (data.already_logged_in) {
       setStatus('login-status', 'Already authenticated.');
     } else {
