@@ -133,7 +133,6 @@ class IBKRSession:
             error_dict = {
                 "error_code": response.status_code,
                 "error_reason": response.reason,
-                "response_url": response.url,
                 "response_body": response_data,
                 "response_request": {
                     "url": url,

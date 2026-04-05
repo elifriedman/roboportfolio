@@ -1,0 +1,1 @@
+sudo docker run --rm --name tws --ulimit nofile=10000:10000 -p 5000:5000 -d tws:latest
