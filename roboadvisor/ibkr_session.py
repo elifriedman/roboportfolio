@@ -36,10 +36,10 @@ class IBKRSession:
         url = self.resource_url + endpoint
         return url
 
-    def get(self, endpoint: str, params: dict = None, raise_on_error: bool = True) -> dict:
+    def get(self, endpoint: str, params: dict | None = None, raise_on_error: bool = True) -> dict:
         return self.make_request("get", endpoint=endpoint, params=params, raise_on_error=raise_on_error)
 
-    def post(self, endpoint: str, json_payload: dict = None, raise_on_error: bool = True) -> dict:
+    def post(self, endpoint: str, json_payload: dict | None = None, raise_on_error: bool = True) -> dict:
         return self.make_request(
             "post",
             endpoint=endpoint,
@@ -50,8 +50,8 @@ class IBKRSession:
     def delete(
         self,
         endpoint: str,
-        params: dict = None,
-        json_payload: dict = None,
+        params: dict | None = None,
+        json_payload: dict | None = None,
         raise_on_error: bool = True,
     ) -> dict:
         return self.make_request(
@@ -114,13 +114,18 @@ class IBKRSession:
             response = requests.post(url=url, params=params, json=json_payload, verify=False)
         elif method == "get":
             response = requests.get(url=url, params=params, json=json_payload, verify=False)
+        elif method == "put":
+            response = requests.put(url=url, params=params, json=json_payload, verify=False)
         elif method == "delete":
             response = requests.delete(url=url, params=params, json=json_payload, verify=False)
+        else:
+            raise ValueError(f"Invalid method: {method}")
         self.logger.info(msg=f"Response Status Code: {response.status_code}")
         self.logger.info(msg=f"Response Content: {response.text}")
 
         if response.ok and len(response.content) > 0:
-            return response.json()
+            response = response.json()
+            return response
         elif not response.ok:
             if len(response.content) == 0:
                 response_data = ""

@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roboportfolio</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #e8e8f0;
+      padding: 1rem 2rem;
+      font-size: 1.2rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
+
+    /* ── Cards ─────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #444; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* ── Forms ──────────────────────────────────────────── */
+    label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.3rem; color: #555; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #d0d5dd;
+      border-radius: 6px; font-size: 0.95rem; outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: #4f7ef8; }
+    .field { margin-bottom: 1rem; }
+
+    /* ── Buttons ────────────────────────────────────────── */
+    button {
+      cursor: pointer; border: none; border-radius: 6px;
+      font-size: 0.9rem; font-weight: 500; padding: 0.55rem 1.1rem;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .btn-primary { background: #4f7ef8; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #3a6ae0; }
+    .btn-danger  { background: #e05c5c; color: #fff; }
+    .btn-danger:hover:not(:disabled)  { background: #c94a4a; }
+    .btn-ghost   { background: #f0f2f5; color: #333; }
+    .btn-ghost:hover:not(:disabled)   { background: #e0e3e8; }
+    .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+
+    /* ── Status / errors ────────────────────────────────── */
+    .status { font-size: 0.88rem; color: #888; margin-top: 0.5rem; min-height: 1.2em; }
+    .error  { color: #c0392b; }
+
+    /* ── Cash grid ─────────────────────────────────────── */
+    .cash-grid { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: flex-end; }
+    .cash-item { flex: 1; min-width: 140px; }
+    .cash-value { font-size: 1.6rem; font-weight: 700; color: #1a1a2e; }
+    .cash-label { font-size: 0.8rem; color: #888; margin-top: 0.2rem; }
+    .convert-row { display: flex; gap: 0.6rem; align-items: flex-end; flex: 2; min-width: 240px; }
+    .convert-row input { flex: 1; }
+
+    /* ── Account list ───────────────────────────────────── */
+    .account-list { list-style: none; }
+    .account-list li { margin-bottom: 0.5rem; }
+    .account-list label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 400; }
+
+    /* ── Allocation editor ──────────────────────────────── */
+    .alloc-row { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; }
+    .alloc-row input[type="text"]   { flex: 2; }
+    .alloc-row input[type="number"] { flex: 1; }
+    #alloc-sum { font-size: 0.88rem; margin: 0.5rem 0; }
+    .alloc-actions { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
+
+    /* ── Charts ─────────────────────────────────────────── */
+    .charts-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .chart-box { flex: 1; min-width: 220px; text-align: center; }
+    .chart-box h3 { font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin-bottom: 0.5rem; }
+    .chart-box canvas { max-height: 220px; }
+
+    /* ── Portfolio table ────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: #888; border-bottom: 2px solid #eee; }
+    td { padding: 0.55rem 0.75rem; border-bottom: 1px solid #f0f2f5; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f8f9fb; }
+    .num { text-align: right; }
+
+    /* ── Trade controls ─────────────────────────────────── */
+    .trade-bar { display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+    .simulate-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; cursor: pointer; }
+    .simulate-toggle input { cursor: pointer; }
+    .spacer { flex: 1; }
+
+    /* ── Spinner ────────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid #ccc; border-top-color: #4f7ef8;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-left: 0.4rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>Roboportfolio</header>
+
+<main>
+
+  <!-- ── Step 1: Login ─────────────────────────────────── -->
+  <section id="step-login" class="card">
+    <h2>Connect</h2>
+    <p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">
+      Click below to open a browser window and log in to Interactive Brokers.
+      If you're already authenticated, this will proceed immediately.
+    </p>
+    <button id="btn-login" class="btn-primary">Log In via Browser</button>
+    <div id="login-status" class="status"></div>
+  </section>
+
+  <!-- ── Step 2: Account Select ────────────────────────── -->
+  <section id="step-accounts" class="card" hidden>
+    <h2>Select Account</h2>
+    <ul id="account-list" class="account-list"></ul>
+    <div style="margin-top:1rem;">
+      <button id="btn-select-account" class="btn-primary" disabled>Continue</button>
+    </div>
+    <div id="account-status" class="status"></div>
+  </section>
+
+  <!-- ── Dashboard ─────────────────────────────────────── -->
+  <div id="dashboard" hidden>
+
+    <!-- Cash Panel -->
+    <div class="card" id="cash-panel">
+      <h2>Cash Balances</h2>
+      <div class="cash-grid">
+        <div class="cash-item">
+          <div id="cash-usd" class="cash-value">—</div>
+          <div class="cash-label">USD available</div>
+        </div>
+        <div class="cash-item">
+          <div id="cash-ils" class="cash-value">—</div>
+          <div class="cash-label">ILS balance</div>
+        </div>
+        <div class="convert-row">
+          <div style="flex:1;">
+            <label for="convert-amount">Convert ILS → USD</label>
+            <input type="number" id="convert-amount" step="0.01" min="0" placeholder="amount in ILS">
+          </div>
+          <button id="btn-convert" class="btn-ghost">Convert</button>
+        </div>
+      </div>
+      <div id="cash-status" class="status"></div>
+    </div>
+
+    <!-- Allocation Editor (shown when allocation is empty) -->
+    <div class="card" id="alloc-panel" hidden>
+      <h2>Target Allocation</h2>
+      <p style="font-size:0.88rem;color:#888;margin-bottom:1rem;">No allocation is configured yet. Define your target portfolio weights below.</p>
+      <div id="alloc-rows"></div>
+      <div id="alloc-sum"></div>
+      <div class="alloc-actions">
+        <button id="btn-add-alloc-row" class="btn-ghost btn-sm">+ Add Stock</button>
+        <button id="btn-save-alloc" class="btn-primary btn-sm">Save Allocation</button>
+      </div>
+      <div id="alloc-status" class="status"></div>
+    </div>
+
+    <!-- Portfolio -->
+    <div class="card" id="portfolio-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+        <h2 style="margin:0;">Portfolio</h2>
+        <button id="btn-refresh" class="btn-ghost btn-sm">↻ Refresh</button>
+      </div>
+
+      <div id="portfolio-summary" style="font-size:0.88rem;color:#666;margin-bottom:1rem;"></div>
+
+      <div class="charts-row" id="charts-row" hidden>
+        <div class="chart-box">
+          <h3>Current</h3>
+          <canvas id="chart-current"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Ideal</h3>
+          <canvas id="chart-ideal"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>After Purchase</h3>
+          <canvas id="chart-planned"></canvas>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="portfolio-table" hidden>
+          <thead>
+            <tr>
+              <th>Stock</th>
+              <th class="num">Price</th>
+              <th class="num">Shares</th>
+              <th class="num">Current %</th>
+              <th class="num">Ideal %</th>
+              <th class="num">Shares to Buy</th>
+              <th class="num">Cost</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="portfolio-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="trade-bar">
+        <label class="simulate-toggle">
+          <input type="checkbox" id="chk-simulate"> Simulate (dry run)
+        </label>
+        <div class="spacer"></div>
+        <button id="btn-buy-all" class="btn-primary" hidden>Buy All</button>
+      </div>
+      <div id="portfolio-status" class="status"></div>
+    </div>
+
+  </div><!-- /dashboard -->
+
+</main>
+
+<script>
+// ── Palette ────────────────────────────────────────────────────────────────
+const COLORS = [
+  '#4f7ef8','#f8964f','#4fc8f8','#f84f7e','#a4f84f',
+  '#f8d44f','#9b4ff8','#4ff8b5','#f84fa0','#4ff865',
+];
+
+// ── Chart instances ────────────────────────────────────────────────────────
+let charts = {};
+
+function buildChart(id, labels, data, title) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id).getContext('2d');
+  charts[id] = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: labels.map((_, i) => COLORS[i % COLORS.length]),
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12, padding: 8 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${(ctx.parsed * 100).toFixed(1)}%`
+          }
+        }
+      }
+    }
+  });
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fmt  = n => n == null ? '—' : '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const fmtN = n => n == null ? '—' : n.toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 4});
+const fmtP = n => n == null ? '—' : (n * 100).toFixed(1) + '%';
+
+function setStatus(id, msg, isError = false) {
+  const el = $(id);
+  el.textContent = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+
+async function apiFetch(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.detail || `HTTP ${res.status}`);
+  return json;
+}
+
+// ── Step 1: Login ──────────────────────────────────────────────────────────
+$('btn-login').addEventListener('click', async () => {
+  const btn = $('btn-login');
+  btn.disabled = true;
+  btn.innerHTML = 'Connecting… <span class="spinner"></span>';
+  setStatus('login-status', 'Opening browser for IBKR login (may take a moment)…');
+  try {
+    const data = await apiFetch('POST', '/api/login');
+    if (data.already_logged_in) {
+      setStatus('login-status', 'Already authenticated.');
+    } else {
+      setStatus('login-status', 'Login successful.');
+    }
+    await loadAccounts();
+  } catch (e) {
+    setStatus('login-status', e.message, true);
+    btn.disabled = false;
+    btn.textContent = 'Log In via Browser';
+  }
+});
+
+async function loadAccounts() {
+  const accounts = await apiFetch('GET', '/api/accounts');
+  if (accounts.length === 1) {
+    // Auto-select single account
+    await selectAccount(accounts[0].id || accounts[0].accountId || accounts[0]);
+    return;
+  }
+  // Show account picker
+  $('step-login').hidden = true;
+  const list = $('account-list');
+  list.innerHTML = '';
+  accounts.forEach((acct, i) => {
+    const id = acct.id || acct.accountId || acct;
+    const li = document.createElement('li');
+    li.innerHTML = `<label><input type="radio" name="acct" value="${id}" ${i === 0 ? 'checked' : ''}> ${id}</label>`;
+    list.appendChild(li);
+  });
+  $('btn-select-account').disabled = false;
+  $('step-accounts').hidden = false;
+}
+
+$('btn-select-account').addEventListener('click', async () => {
+  const chosen = document.querySelector('input[name="acct"]:checked');
+  if (!chosen) return;
+  $('btn-select-account').disabled = true;
+  setStatus('account-status', 'Selecting account…');
+  try {
+    await selectAccount(chosen.value);
+  } catch (e) {
+    setStatus('account-status', e.message, true);
+    $('btn-select-account').disabled = false;
+  }
+});
+
+async function selectAccount(accountId) {
+  await apiFetch('POST', '/api/accounts/select', { account_id: accountId });
+  $('step-login').hidden = true;
+  $('step-accounts').hidden = true;
+  $('dashboard').hidden = false;
+  await loadCash();
+  await checkAllocation();
+}
+
+// ── Cash Panel ─────────────────────────────────────────────────────────────
+async function loadCash() {
+  try {
+    const data = await apiFetch('GET', '/api/cash');
+    $('cash-usd').textContent = fmt(data.usd);
+    $('cash-ils').textContent = data.ils.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ₪';
+    $('convert-amount').value = data.ils > 0 ? data.ils.toFixed(2) : '';
+    $('convert-amount').placeholder = data.ils > 0 ? `${data.ils.toFixed(2)} ILS` : 'amount in ILS';
+  } catch (e) {
+    setStatus('cash-status', 'Could not load cash: ' + e.message, true);
+  }
+}
+
+$('btn-convert').addEventListener('click', async () => {
+  const btn = $('btn-convert');
+  btn.disabled = true;
+  setStatus('cash-status', 'Converting…');
+  const rawAmount = $('convert-amount').value.trim();
+  const body = rawAmount ? { amount: parseFloat(rawAmount) } : {};
+  try {
+    await apiFetch('POST', '/api/convert-ils', body);
+    setStatus('cash-status', 'Conversion order submitted.');
+    await loadCash();
+  } catch (e) {
+    setStatus('cash-status', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Allocation Editor ──────────────────────────────────────────────────────
+async function checkAllocation() {
+  const rows = await apiFetch('GET', '/api/allocation');
+  const isEmpty = rows.length === 0 || rows.every(r => r.allocation === 0);
+  if (isEmpty) {
+    renderAllocEditor(rows.length ? rows : [{ stock: '', allocation: 0 }]);
+    $('alloc-panel').hidden = false;
+  } else {
+    $('alloc-panel').hidden = true;
+    await loadPortfolio();
+  }
+}
+
+function renderAllocEditor(rows) {
+  const container = $('alloc-rows');
+  container.innerHTML = '';
+  rows.forEach((row, i) => addAllocRow(row.stock, row.allocation * 100));
+  updateAllocSum();
+}
+
+function addAllocRow(stock = '', pct = 0) {
+  const container = $('alloc-rows');
+  const div = document.createElement('div');
+  div.className = 'alloc-row';
+  div.innerHTML = `
+    <input type="text"   placeholder="TICKER" value="${stock}" style="text-transform:uppercase">
+    <input type="number" placeholder="%" value="${pct || ''}" min="0" max="100" step="0.01">
+    <button class="btn-ghost btn-sm" onclick="this.parentElement.remove();updateAllocSum()">✕</button>
+  `;
+  div.querySelector('input[type="number"]').addEventListener('input', updateAllocSum);
+  container.appendChild(div);
+}
+
+function updateAllocSum() {
+  const inputs = $('alloc-rows').querySelectorAll('input[type="number"]');
+  const total = Array.from(inputs).reduce((s, el) => s + (parseFloat(el.value) || 0), 0);
+  const el = $('alloc-sum');
+  const ok = Math.abs(total - 100) < 0.1;
+  el.textContent = `Total: ${total.toFixed(2)}% ${ok ? '✓' : '(must equal 100%)'}`;
+  el.style.color = ok ? '#27ae60' : '#c0392b';
+  $('btn-save-alloc').disabled = !ok;
+}
+
+$('btn-add-alloc-row').addEventListener('click', () => { addAllocRow(); updateAllocSum(); });
+
+$('btn-save-alloc').addEventListener('click', async () => {
+  const rows = Array.from($('alloc-rows').querySelectorAll('.alloc-row')).map(div => {
+    const [stockEl, pctEl] = div.querySelectorAll('input');
+    return { stock: stockEl.value.trim().toUpperCase(), allocation: parseFloat(pctEl.value) / 100 };
+  }).filter(r => r.stock);
+  setStatus('alloc-status', 'Saving…');
+  try {
+    await apiFetch('PUT', '/api/allocation', rows);
+    setStatus('alloc-status', 'Saved.');
+    $('alloc-panel').hidden = true;
+    await loadPortfolio();
+  } catch (e) {
+    setStatus('alloc-status', e.message, true);
+  }
+});
+
+// ── Portfolio ──────────────────────────────────────────────────────────────
+$('btn-refresh').addEventListener('click', loadPortfolio);
+
+async function loadPortfolio() {
+  const btn = $('btn-refresh');
+  btn.disabled = true;
+  btn.textContent = '↻ Loading…';
+  setStatus('portfolio-status', 'Fetching portfolio data…');
+  try {
+    const data = await apiFetch('GET', '/api/portfolio');
+    renderPortfolio(data);
+    setStatus('portfolio-status', '');
+  } catch (e) {
+    setStatus('portfolio-status', e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↻ Refresh';
+  }
+}
+
+function renderPortfolio(data) {
+  const { positions, total_invested, total_with_cash, usd_cash } = data;
+
+  $('portfolio-summary').textContent =
+    `Invested: ${fmt(total_invested)}  ·  Cash: ${fmt(usd_cash)}  ·  Total: ${fmt(total_with_cash)}`;
+
+  // Charts
+  const labels = positions.map(p => p.symbol);
+  buildChart('chart-current', labels, positions.map(p => p.current_pct),  'Current');
+  buildChart('chart-ideal',   labels, positions.map(p => p.ideal_pct),    'Ideal');
+  buildChart('chart-planned', labels, positions.map(p => p.planned_pct),  'Planned');
+  $('charts-row').hidden = false;
+
+  // Table
+  const tbody = $('portfolio-tbody');
+  tbody.innerHTML = '';
+  const hasBuys = positions.some(p => p.shares_to_purchase > 0);
+  positions.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${p.symbol}</strong></td>
+      <td class="num">${fmt(p.price)}</td>
+      <td class="num">${fmtN(p.num_shares)}</td>
+      <td class="num">${fmtP(p.current_pct)}</td>
+      <td class="num">${fmtP(p.ideal_pct)}</td>
+      <td class="num">${p.shares_to_purchase > 0 ? p.shares_to_purchase : '—'}</td>
+      <td class="num">${p.shares_to_purchase > 0 ? fmt(p.shares_to_purchase * p.price) : '—'}</td>
+      <td>${p.shares_to_purchase > 0
+        ? `<button class="btn-primary btn-sm btn-buy-one" data-symbol="${p.symbol}">Buy</button>`
+        : ''
+      }</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  $('portfolio-table').hidden = false;
+  $('btn-buy-all').hidden = !hasBuys;
+
+  // Wire per-row buy buttons
+  tbody.querySelectorAll('.btn-buy-one').forEach(btn => {
+    btn.addEventListener('click', () => executeBuy(btn.dataset.symbol, btn));
+  });
+}
+
+// ── Orders ─────────────────────────────────────────────────────────────────
+function isSimulated() { return $('chk-simulate').checked; }
+
+$('btn-buy-all').addEventListener('click', async () => {
+  const btn = $('btn-buy-all');
+  btn.disabled = true;
+  const live = !isSimulated();
+  setStatus('portfolio-status', live ? 'Placing orders…' : 'Simulating orders…');
+  try {
+    const res = await apiFetch('POST', '/api/orders', { live });
+    const n = (res.results || []).length;
+    setStatus('portfolio-status', `${live ? 'Placed' : 'Simulated'} ${n} order${n !== 1 ? 's' : ''}.`);
+  } catch (e) {
+    setStatus('portfolio-status', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function executeBuy(symbol, btn) {
+  btn.disabled = true;
+  const live = !isSimulated();
+  setStatus('portfolio-status', `${live ? 'Buying' : 'Simulating'} ${symbol}…`);
+  try {
+    const res = await apiFetch('POST', '/api/orders', { live, symbol });
+    setStatus('portfolio-status', `${live ? 'Order placed' : 'Simulated'} for ${symbol}.`);
+  } catch (e) {
+    setStatus('portfolio-status', e.message, true);
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

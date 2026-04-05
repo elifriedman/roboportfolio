@@ -9,13 +9,12 @@ import random
 import threading
 import time
 import json
-import requests
 import logging
 import urllib3
 
 from urllib3.exceptions import InsecureRequestWarning
-from roboadvisor.initial_login import login_to_ibkr
-from roboadvisor.ibkr_session import IBKRSession, RequestException
+from .initial_login import login_to_ibkr
+from .ibkr_session import IBKRSession, RequestException
 
 urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -44,10 +43,10 @@ class Stock:
     def __init__(
         self,
         symbol: str,
-        conid: int = None,
-        exchange: str = None,
-        currency: str = None,
-        session: IBKRSession = None,
+        conid: str | None = None,
+        exchange: str | None = None,
+        currency: str | None = None,
+        session: IBKRSession | None = None,
     ):
         self.symbol = symbol
         self.conid = conid
@@ -61,7 +60,7 @@ class Stock:
         self.price_updated = None
 
     @classmethod
-    def by_conid(cls, conid: str, exchange: str = None, session: IBKRSession = None):
+    def by_conid(cls, conid: str, exchange: str | None = None, session: IBKRSession | None = None):
         session = cls.session if session is None else session
         result = session.get("/trsrv/secdef", params={"conids": str(conid)})
         contract = result["secdef"][0]
@@ -75,7 +74,7 @@ class Stock:
         )
 
     @classmethod
-    def by_symbol(cls, symbol: str, session: IBKRSession = None):
+    def by_symbol(cls, symbol: str, session: IBKRSession | None = None):
         session = cls.session if session is None else session
         params = {"symbols": symbol}
         response = session.get("/trsrv/stocks", params=params)
@@ -102,6 +101,7 @@ class Stock:
         # TODO fix
         conid2stock = {stock.conid: stock for stock in stocks}
         conid_str = ",".join([str(stock.conid) for stock in stocks])
+        response = None
         for i in range(max_tries):
             responses = cls.session.get(
                 "/iserver/marketdata/snapshot",
@@ -123,7 +123,7 @@ class Stock:
             if updated:
                 return stocks
             time.sleep(sleep_interval)
-        raise TimeoutError(f"Could not get latest price for {self}. Last response: {response}")
+        raise TimeoutError(f"Could not get latest price for {', '.join([s.symbol for s in stocks])}. Last response: {response}")
 
     def update_latest_price(self, max_tries: int = 10, sleep_interval: float = 0.5):
         self.update_prices(stocks=[self], max_tries=max_tries, sleep_interval=sleep_interval)
@@ -141,7 +141,7 @@ class Stock:
 class Position:
     stock: Stock
     num_shares: float
-    allocation: float = None
+    allocation: float = 0
     shares_to_purchase: int = 0
     shares_desired: float = 0
     value_to_purchase: float = 0
@@ -150,27 +150,27 @@ class Position:
     def market_value(self):
         if self.stock.price is None:
             self.stock.update_latest_price()
+        if self.stock.price is None:
+            raise ValueError(f"Could not get price of {self.stock.symbol}")
         return self.stock.price * self.num_shares
 
 
 class Portfolio:
 
-    def __init__(self, account_id: int, session: IBKRSession = IBKRSession()):
+    def __init__(self, account_id: str, session: IBKRSession = IBKRSession()):
         self.session = session
         self.account_id = account_id
         self.positions: list[Position] = []
 
-    def get_active_positions(self) -> list[Position]:
-        return
-
     def update_current_positions(self) -> list[Position]: 
         self.positions = self.update_positions_for_account(self.account_id, only_current=True)
+        return self.positions
 
     def update_all_positions(self) -> list[Position]:
         self.positions = self.update_positions_for_account(self.account_id)
         return self.positions
 
-    def update_positions_for_account(self, account_id: int, only_current: bool = False) -> list[Position]:
+    def update_positions_for_account(self, account_id: str, only_current: bool = False) -> list[Position]:
         finished = False
         page = 0
         positions = []
@@ -186,7 +186,7 @@ class Portfolio:
                 if symbol not in current_symbols:
                     continue
                 stock = Stock(symbol=symbol, conid=row["conid"], currency=row["currency"])
-                position = self.get_position(stock=stock, add_if_needed=True)
+                position = self.get_position(stock=stock, add_if_needed=not only_current)
                 position.num_shares = row["position"]
                 positions.append(position)
         return positions
@@ -216,15 +216,17 @@ class Portfolio:
 class Order:
     session = IBKRSession()
 
-    def __init__(self, account_id: int):
+    def __init__(self, account_id: str):
         self.account_id = account_id
         self.to_order = []
         self.order_id = None
         self.order_status = None
 
     def handle_order_request(
-        self, orders_data: list[dict], auto_confirm: bool = True, live: bool = True
+        self, orders_data: list[dict] | dict, auto_confirm: bool = True, live: bool = True
     ):
+        if isinstance(orders_data, dict):
+            orders_data = [orders_data]
         data = {"orders": orders_data}
         url = f"/iserver/account/{self.account_id}/orders"
         if live is False:
@@ -252,7 +254,7 @@ class Order:
         stock: Stock,
         num_shares: int,
         type: str = "MKT",
-        price: float = None,
+        price: float | None = None,
         add: bool = True,
     ):
         assert type.upper() in ["MKT", "LMT"], f"type must be 'MKT' or 'LMT' not {type}"
@@ -291,7 +293,7 @@ class Account:
     TICKER = "USD.ILS"
     USD_ILS_CONID = 44495102
 
-    def __init__(self, account_id: int, session: IBKRSession = IBKRSession()):
+    def __init__(self, account_id: str, session: IBKRSession = IBKRSession()):
         self.session = session
         self.account_id = account_id
         self.ils_cash = 0
@@ -438,26 +440,27 @@ class InvestmentPlanStrategy:
         Stock.update_prices([i.stock for i in self.investments])
         if cash_available <= 0:
             logger.info(f"No cash available :_( You have ${cash_available}")
-            return self.investments
+            return self
         total_value = portfolio.total_value() + cash_available
         for investment in self.investments:
             position = portfolio.get_position(stock=investment.stock, add_if_needed=True)
             desired_value = investment.allocation * total_value
-            value_to_purchase = desired_value - position.market_value
-            investment.value_to_purchase = value_to_purchase
-            investment.shares_desired = value_to_purchase / investment.stock.price
+            investment.value_to_purchase = desired_value - position.market_value
+            investment.shares_desired = investment.value_to_purchase / investment.stock.price
         total_offset = sum(
             [i.value_to_purchase for i in self.investments if i.value_to_purchase > 0]
         )
         money_left = 0.0
         for investment in self.investments:
+            if investment.stock.price is None:
+                raise ValueError(f"Could not get price for stock {investment.stock.symbol}")
             fraction_of_allocation = investment.value_to_purchase / total_offset
             value_to_purchase = cash_available * fraction_of_allocation
             shares_to_purchase = value_to_purchase / investment.stock.price
             func = math.floor if shares_to_purchase > 0 else math.ceil
-            nonfractional_num_shares = int(func(shares_to_purchase))
-            investment.shares_to_purchase = nonfractional_num_shares
-            leftover_money = (shares_to_purchase - nonfractional_num_shares) * position.stock.price
+            integer_num_shares = int(func(shares_to_purchase))
+            investment.shares_to_purchase = integer_num_shares
+            leftover_money = (shares_to_purchase - integer_num_shares) * investment.stock.price
             leftover_money = max(leftover_money, 0)
             money_left += leftover_money
         self.calculate_leftover_shares_to_purchase(money_left=money_left)
@@ -501,6 +504,8 @@ class InvestmentPlanStrategy:
             random.shuffle(idxs)
         for idx in idxs:
             investment = self.investments[idx]
+            if investment.stock.price is None:
+                raise ValueError(f"Could not get value of {investment.stock.symbol}")
             if investment.stock.price <= money_left:
                 investment.shares_to_purchase += 1
                 money_left -= investment.stock.price
@@ -525,7 +530,7 @@ def login(account_id) -> Account:
     return account
 
 
-def main(account_id, live: bool = False, max_to_trade: float = None):
+def main(account_id, live: bool = False, max_to_trade: float | None = None):
     account = login(account_id=account_id)
 
     logger.info(f"Account contains {account.ils_cash} ILS and {account.usd_cash} USD")
