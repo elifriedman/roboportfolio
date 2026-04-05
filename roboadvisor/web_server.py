@@ -47,6 +47,11 @@ class AllocationRow(BaseModel):
     allocation: float
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class OrderRequest(BaseModel):
     live: bool = False
     symbol: Optional[str] = None
@@ -63,26 +68,31 @@ def require_account() -> Account:
 
 # ── Auth & account routes ─────────────────────────────────────────────────────
 
-@app.post("/api/login")
-def api_login():
-    """Trigger browser automation login, then init the IBKR session."""
-    # Try to init session first — if already authenticated this succeeds silently
+@app.get("/api/auth-status")
+def api_auth_status():
+    """Check whether the IBKR gateway session is already authenticated."""
     try:
         _session.post(
             "/iserver/auth/ssodh/init",
             json_payload={"publish": True, "compete": True},
             raise_on_error=True,
         )
-        # Quick check: can we reach the accounts endpoint?
         _session.get("/portfolio/accounts", raise_on_error=True)
-        return {"ok": True, "already_logged_in": True}
+        return {"authenticated": True}
     except Exception:
-        pass
+        return {"authenticated": False}
 
-    # Need browser login
-    success = login_to_ibkr()
+
+@app.post("/api/login")
+def api_login(req: LoginRequest):
+    """Log in to IBKR via Playwright using the provided credentials."""
+    # Check if already authenticated
+    if api_auth_status()["authenticated"]:
+        return {"ok": True, "already_logged_in": True}
+
+    success = login_to_ibkr(req.username, req.password)
     if not success:
-        raise HTTPException(status_code=500, detail="Browser login failed")
+        raise HTTPException(status_code=401, detail="Login failed — check credentials or approve the 2FA prompt")
     try:
         _session.post(
             "/iserver/auth/ssodh/init",

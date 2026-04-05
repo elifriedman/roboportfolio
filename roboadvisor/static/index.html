@@ -128,10 +128,18 @@
   <section id="step-login" class="card">
     <h2>Connect</h2>
     <p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">
-      Click below to open a browser window and log in to Interactive Brokers.
-      If you're already authenticated, this will proceed immediately.
+      Enter your Interactive Brokers credentials. After submitting, approve the
+      2FA notification on your phone — login completes automatically.
     </p>
-    <button id="btn-login" class="btn-primary">Log In via Browser</button>
+    <div class="field">
+      <label for="login-username">Username</label>
+      <input type="text" id="login-username" autocomplete="username" placeholder="IBKR username">
+    </div>
+    <div class="field">
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" autocomplete="current-password" placeholder="IBKR password">
+    </div>
+    <button id="btn-login" class="btn-primary">Log In</button>
     <div id="login-status" class="status"></div>
   </section>
 
@@ -298,13 +306,23 @@ async function apiFetch(method, path, body) {
 }
 
 // ── Step 1: Login ──────────────────────────────────────────────────────────
-$('btn-login').addEventListener('click', async () => {
+$('btn-login').addEventListener('click', doLogin);
+$('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+async function doLogin() {
+  const username = $('login-username').value.trim();
+  const password = $('login-password').value;
+  if (!username || !password) {
+    setStatus('login-status', 'Please enter your username and password.', true);
+    return;
+  }
   const btn = $('btn-login');
   btn.disabled = true;
-  btn.innerHTML = 'Connecting… <span class="spinner"></span>';
-  setStatus('login-status', 'Opening browser for IBKR login (may take a moment)…');
+  btn.innerHTML = 'Logging in… <span class="spinner"></span>';
+  setStatus('login-status', 'Waiting for IBKR 2FA — approve the notification on your phone…');
   try {
-    const data = await apiFetch('POST', '/api/login');
+    const data = await apiFetch('POST', '/api/login', { username, password });
+    $('login-password').value = '';
     if (data.already_logged_in) {
       setStatus('login-status', 'Already authenticated.');
     } else {
@@ -314,9 +332,9 @@ $('btn-login').addEventListener('click', async () => {
   } catch (e) {
     setStatus('login-status', e.message, true);
     btn.disabled = false;
-    btn.textContent = 'Log In via Browser';
+    btn.textContent = 'Log In';
   }
-});
+}
 
 async function loadAccounts() {
   const accounts = await apiFetch('GET', '/api/accounts');
