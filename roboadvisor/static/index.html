@@ -127,11 +127,35 @@
   <!-- ── Step 1: Login ─────────────────────────────────── -->
   <section id="step-login" class="card">
     <h2>Connect</h2>
-    <p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">
-      Click below to open a browser window and log in to Interactive Brokers.
-      If you're already authenticated, this will proceed immediately.
-    </p>
-    <button id="btn-login" class="btn-primary">Log In via Browser</button>
+
+    <!-- Phase 1: prompt -->
+    <div id="login-prompt">
+      <p style="font-size:0.9rem;color:#666;margin-bottom:1rem;">
+        Log in to your Interactive Brokers account below, then return here.
+        If you're already authenticated, click Connect to proceed immediately.
+      </p>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap;">
+        <button id="btn-open-ibkr" class="btn-primary">Open IBKR Login</button>
+        <button id="btn-login" class="btn-ghost">Already logged in? Connect</button>
+      </div>
+    </div>
+
+    <!-- Phase 2: iframe + polling (hidden until user clicks Open) -->
+    <div id="login-iframe-wrap" hidden>
+      <p style="font-size:0.85rem;color:#888;margin-bottom:0.75rem;">
+        Log in below, then this page will advance automatically.
+      </p>
+      <iframe id="ibkr-frame" src="/ibkr/"
+        style="width:100%;height:580px;border:1px solid #d0d5dd;border-radius:6px;"
+        title="IBKR Login"></iframe>
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.75rem;">
+        <span style="font-size:0.88rem;color:#888;">
+          Waiting for login… <span class="spinner"></span>
+        </span>
+        <button id="btn-cancel-login" class="btn-ghost btn-sm">Cancel</button>
+      </div>
+    </div>
+
     <div id="login-status" class="status"></div>
   </section>
 
@@ -298,25 +322,64 @@ async function apiFetch(method, path, body) {
 }
 
 // ── Step 1: Login ──────────────────────────────────────────────────────────
+let _pollInterval = null;
+
+$('btn-open-ibkr').addEventListener('click', () => {
+  $('login-prompt').hidden = true;
+  $('login-iframe-wrap').hidden = false;
+  setStatus('login-status', '');
+  startAuthPolling();
+});
+
+$('btn-cancel-login').addEventListener('click', () => {
+  stopAuthPolling();
+  $('login-iframe-wrap').hidden = true;
+  $('login-prompt').hidden = false;
+  setStatus('login-status', '');
+});
+
+// "Already logged in?" shortcut — checks immediately without showing iframe
 $('btn-login').addEventListener('click', async () => {
   const btn = $('btn-login');
   btn.disabled = true;
-  btn.innerHTML = 'Connecting… <span class="spinner"></span>';
-  setStatus('login-status', 'Opening browser for IBKR login (may take a moment)…');
+  btn.innerHTML = 'Checking… <span class="spinner"></span>';
+  setStatus('login-status', '');
   try {
-    const data = await apiFetch('POST', '/api/login');
-    if (data.already_logged_in) {
-      setStatus('login-status', 'Already authenticated.');
+    const data = await apiFetch('GET', '/api/auth-status');
+    if (data.authenticated) {
+      stopAuthPolling();
+      await loadAccounts();
     } else {
-      setStatus('login-status', 'Login successful.');
+      setStatus('login-status', 'Not authenticated — please log in via the IBKR form.', true);
     }
-    await loadAccounts();
   } catch (e) {
     setStatus('login-status', e.message, true);
+  } finally {
     btn.disabled = false;
-    btn.textContent = 'Log In via Browser';
+    btn.innerHTML = 'Already logged in? Connect';
   }
 });
+
+function startAuthPolling() {
+  stopAuthPolling();
+  _pollInterval = setInterval(async () => {
+    try {
+      const data = await apiFetch('GET', '/api/auth-status');
+      if (data.authenticated) {
+        stopAuthPolling();
+        setStatus('login-status', 'Login detected — loading accounts…');
+        await loadAccounts();
+      }
+    } catch (_) { /* ignore transient errors */ }
+  }, 2000);
+}
+
+function stopAuthPolling() {
+  if (_pollInterval !== null) {
+    clearInterval(_pollInterval);
+    _pollInterval = null;
+  }
+}
 
 async function loadAccounts() {
   const accounts = await apiFetch('GET', '/api/accounts');

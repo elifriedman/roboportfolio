@@ -17,7 +17,6 @@ from roboadvisor.client_api import (
     PlanReader,
 )
 from roboadvisor.ibkr_session import IBKRSession, RequestException
-from roboadvisor.initial_login import login_to_ibkr
 
 app = FastAPI()
 
@@ -63,34 +62,28 @@ def require_account() -> Account:
 
 # ── Auth & account routes ─────────────────────────────────────────────────────
 
-@app.post("/api/login")
-def api_login():
-    """Trigger browser automation login, then init the IBKR session."""
-    # Try to init session first — if already authenticated this succeeds silently
+@app.get("/api/auth-status")
+def api_auth_status():
+    """Check whether the IBKR gateway session is authenticated."""
     try:
         _session.post(
             "/iserver/auth/ssodh/init",
             json_payload={"publish": True, "compete": True},
             raise_on_error=True,
         )
-        # Quick check: can we reach the accounts endpoint?
         _session.get("/portfolio/accounts", raise_on_error=True)
-        return {"ok": True, "already_logged_in": True}
+        return {"authenticated": True}
     except Exception:
-        pass
+        return {"authenticated": False}
 
-    # Need browser login
-    success = login_to_ibkr()
-    if not success:
-        raise HTTPException(status_code=500, detail="Browser login failed")
-    try:
-        _session.post(
-            "/iserver/auth/ssodh/init",
-            json_payload={"publish": True, "compete": True},
-        )
-    except RequestException:
-        pass
-    return {"ok": True, "already_logged_in": False}
+
+@app.post("/api/login")
+def api_login():
+    """Check auth status; return login_url if not yet authenticated."""
+    status = api_auth_status()
+    if status["authenticated"]:
+        return {"ok": True, "already_logged_in": True}
+    return {"ok": False, "login_url": "/ibkr/"}
 
 
 @app.get("/api/accounts")
