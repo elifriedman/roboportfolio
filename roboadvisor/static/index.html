@@ -84,6 +84,12 @@
     .alloc-row input[type="number"] { flex: 1; }
     #alloc-sum { font-size: 0.88rem; margin: 0.5rem 0; }
     .alloc-actions { display: flex; gap: 0.6rem; margin-top: 0.8rem; }
+    .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .panel-header h2 { margin: 0; }
+    .btn-toggle { background: none; border: none; font-size: 1rem; color: #888; padding: 0.2rem 0.4rem; cursor: pointer; }
+    .btn-toggle:hover { color: #444; }
+    .collapsible { overflow: hidden; transition: max-height 0.2s ease; }
+    .collapsible.collapsed { max-height: 0 !important; }
 
     /* ── Charts ─────────────────────────────────────────── */
     .charts-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
@@ -179,17 +185,22 @@
       <div id="cash-status" class="status"></div>
     </div>
 
-    <!-- Allocation Editor (shown when allocation is empty) -->
+    <!-- Allocation Editor -->
     <div class="card" id="alloc-panel" hidden>
-      <h2>Target Allocation</h2>
-      <p style="font-size:0.88rem;color:#888;margin-bottom:1rem;">No allocation is configured yet. Define your target portfolio weights below.</p>
-      <div id="alloc-rows"></div>
-      <div id="alloc-sum"></div>
-      <div class="alloc-actions">
-        <button id="btn-add-alloc-row" class="btn-ghost btn-sm">+ Add Stock</button>
-        <button id="btn-save-alloc" class="btn-primary btn-sm">Save Allocation</button>
+      <div class="panel-header">
+        <h2>Target Allocation</h2>
+        <button class="btn-toggle" id="btn-toggle-alloc" title="Minimize">▲</button>
       </div>
-      <div id="alloc-status" class="status"></div>
+      <div class="collapsible" id="alloc-body">
+        <p id="alloc-empty-msg" style="font-size:0.88rem;color:#888;margin-bottom:1rem;">No allocation is configured yet. Define your target portfolio weights below.</p>
+        <div id="alloc-rows"></div>
+        <div id="alloc-sum"></div>
+        <div class="alloc-actions">
+          <button id="btn-add-alloc-row" class="btn-ghost btn-sm">+ Add Stock</button>
+          <button id="btn-save-alloc" class="btn-primary btn-sm">Save Allocation</button>
+        </div>
+        <div id="alloc-status" class="status"></div>
+      </div>
     </div>
 
     <!-- Portfolio -->
@@ -410,14 +421,35 @@ $('btn-convert').addEventListener('click', async () => {
 });
 
 // ── Allocation Editor ──────────────────────────────────────────────────────
+function setAllocCollapsed(collapsed) {
+  const body = $('alloc-body');
+  const btn = $('btn-toggle-alloc');
+  if (collapsed) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    requestAnimationFrame(() => body.classList.add('collapsed'));
+    btn.textContent = '▼';
+    btn.title = 'Expand';
+  } else {
+    body.classList.remove('collapsed');
+    body.style.maxHeight = body.scrollHeight + 'px';
+    btn.textContent = '▲';
+    btn.title = 'Minimize';
+  }
+}
+
+$('btn-toggle-alloc').addEventListener('click', () => {
+  const collapsed = $('alloc-body').classList.contains('collapsed');
+  setAllocCollapsed(!collapsed);
+});
+
 async function checkAllocation() {
   const rows = await apiFetch('GET', '/api/allocation');
   const isEmpty = rows.length === 0 || rows.every(r => r.allocation === 0);
-  if (isEmpty) {
-    renderAllocEditor(rows.length ? rows : [{ stock: '', allocation: 0 }]);
-    $('alloc-panel').hidden = false;
-  } else {
-    $('alloc-panel').hidden = true;
+  $('alloc-panel').hidden = false;
+  $('alloc-empty-msg').hidden = !isEmpty;
+  renderAllocEditor(rows.length ? rows : [{ stock: '', allocation: 0 }]);
+  if (!isEmpty) {
+    setAllocCollapsed(true);
     await loadPortfolio();
   }
 }
@@ -463,7 +495,8 @@ $('btn-save-alloc').addEventListener('click', async () => {
   try {
     await apiFetch('PUT', '/api/allocation', rows);
     setStatus('alloc-status', 'Saved.');
-    $('alloc-panel').hidden = true;
+    $('alloc-empty-msg').hidden = true;
+    setAllocCollapsed(true);
     await loadPortfolio();
   } catch (e) {
     setStatus('alloc-status', e.message, true);
