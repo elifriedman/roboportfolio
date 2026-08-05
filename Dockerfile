@@ -3,6 +3,7 @@ FROM alpine:3.18
 
 # Install required packages
 RUN apk update && \
+    apk add --no-cache bash && \
     apk add --no-cache openjdk17-jre yq
 
 # Set the JAVA_HOME environment variable
@@ -19,6 +20,7 @@ WORKDIR /webapi
 
 # Add the '172.*' IP range to the 'allow' list for docker
 RUN yq eval -i '.ips.allow |= . + ["172.*"]' root/conf.yaml
+RUN yq eval -i '.ips.allow |= . + ["10.*"]' root/conf.yaml
 
 # Expose port
 EXPOSE 5000

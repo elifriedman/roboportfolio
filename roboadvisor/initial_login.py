@@ -3,7 +3,7 @@ from playwright.sync_api import sync_playwright, expect
 
 def login_to_ibkr(username: str, password: str, url: str = "https://localhost:5000"):
     with sync_playwright() as p:
-        browser = p.chromium.launch().new_context(ignore_https_errors=True)
+        browser = p.chromium.launch(headless=True).new_context(ignore_https_errors=True)
         page = browser.new_page()
         page.goto(url)
         page.get_by_label("Username").fill(username)

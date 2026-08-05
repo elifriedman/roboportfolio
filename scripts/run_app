@@ -1,0 +1,1 @@
+SESSION_SECRET=$(openssl rand -hex 32) python -m roboadvisor.web_server

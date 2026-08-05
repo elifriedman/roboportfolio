@@ -2,6 +2,9 @@ import csv
 import os
 from pathlib import Path
 from typing import Optional
+import uvicorn
+from uvicorn.config import LOGGING_CONFIG
+
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -28,6 +31,7 @@ SESSION_TIMEOUT_SECONDS = int(float(os.getenv("SESSION_TIMEOUT_HOURS", "3")) * 3
 
 ALLOCATION_PATH = Path("config/allocation.csv")
 STATIC_DIR = Path(__file__).parent / "static"
+
 
 app = FastAPI()
 app.add_middleware(
@@ -275,10 +279,16 @@ def api_orders(req: OrderRequest, _: None = Depends(require_auth)):
 
 
 # ── Static files ──────────────────────────────────────────────────────────────
-
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
 def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+LOGGING_CONFIG["formatters"]["default"]["fmt"] = "%(levelprefix)s %(asctime)s %(message)s"
+LOGGING_CONFIG["formatters"]["access"]["fmt"] = '%(levelprefix)s %(asctime)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+
+if __name__ == "__main__":
+    uvicorn.run(app)
